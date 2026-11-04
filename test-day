@@ -1,0 +1,297 @@
+#!/bin/bash
+# test-day: Tests für day (bash 3.2). Testdaten nur in Wegwerf-Verzeichnissen unter dem Job-tmp.
+# Aufruf: test-day [--no-mutations]   (DAY=<Pfad> testet eine andere Kopie von day)
+# Ohne --no-mutations läuft danach jede Mutation: Kopie von day.py mit einer Änderung, der Test muss
+# am genannten Grund (FAIL-Label) scheitern. Ausgabe endet mit "mutations: N proven, M open".
+#
+# MUTATIONS
+# (Stand: siehe letzte Zeile der Testausgabe; offene Mutationen stehen hier mit Nachhol-Befehl.)
+# OFFEN: keine.
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd)
+DAY=${DAY:-$HERE/day}
+BASE=/Users/werner/.claude/jobs/9bfdaf3d/tmp
+T=$(mktemp -d "$BASE/daytest.XXXXXX") || exit 1
+trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/home"
+export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 DAY_GIT_NAME=Tester DAY_GIT_EMAIL=t@example.invalid
+unset DAY_DIR GIT_DIR GIT_WORK_TREE
+PASS=0; FAILN=0
+chk() { local l=$1; shift; if "$@"; then PASS=$((PASS+1)); else FAILN=$((FAILN+1)); echo "FAIL: $l"; fi; }
+eq() { [ "$1" = "$2" ]; }
+has() { printf '%s\n' "$1" | grep -qF -- "$2"; }
+run() { OUT=$("$DAY" "$@" 2>&1); RC=$?; }
+G() { git -C "$1" "${@:2}"; }
+head_of() { G "$1" rev-parse HEAD 2>/dev/null; }
+sum() { cksum < "$1"; }
+
+ents() { local i=1; while [ "$i" -le "$1" ]; do printf -- '- e%s\n' "$i"; i=$((i+1)); done; }
+mkboard() { # dir date nJetzt nHeute nWartet
+  mkdir -p "$1"
+  { printf '# Dayboard (Stand %s)\n\n## Jetzt\n' "$2"; ents "$3"; printf '\n## Heute\n'; ents "$4"
+    printf '\n## Wartet auf Owner\n'; ents "$5"
+    printf '\n## Geparkt\n\n## Erledigt heute\n\n<!-- stw:begin -->\nfacts\n<!-- stw:end -->\n'; } > "$1/DAYBOARD.md"
+}
+edit() { sed "$2" "$1/DAYBOARD.md" > "$1/n.tmp" && mv "$1/n.tmp" "$1/DAYBOARD.md"; }
+checkrun() { run check --dir "$1" --date 2026-11-04; }
+
+# Seed mit Einträgen und Fakten-Block mit Sonderzeichen
+SEED="$T/seed.md"
+printf '# Dayboard (Stand 2026-11-03)\n\n## Jetzt\n- a\n\n## Heute\n- b\n\n## Wartet auf Owner\n\n## Geparkt\n- g\n\n## Erledigt heute\n- done eins\n- done zwei ä\n\n<!-- stw:begin -->\nFakten:  \n- x\t\xc3\xa4 \n<!-- stw:end -->\n' > "$SEED"
+EMPTY="$T/empty.md"
+sed '/^- done/d' "$SEED" > "$EMPTY"
+
+# --- init ---
+B1="$T/b1"
+run init --dir "$B1" --date 2026-11-04
+chk "init: exit 0" eq "$RC" 0
+chk "init: git-Repo" test -d "$B1/.git"
+chk "init: DAYBOARD.md Kopfzeile" eq "$(head -1 "$B1/DAYBOARD.md")" "# Dayboard (Stand 2026-11-04)"
+chk "init: 5 Abschnitte" eq "$(grep -c '^## ' "$B1/DAYBOARD.md")" 5
+chk "init: leerer Fakten-Block" eq "$(grep -c 'stw:' "$B1/DAYBOARD.md")" 2
+chk "init: LOGBOOK append-only" grep -q 'append-only' "$B1/LOGBOOK.md"
+chk "init: ein Commit" eq "$(G "$B1" rev-list --count HEAD)" 1
+chk "init: Commit-Betreff" eq "$(G "$B1" log -1 --format=%s)" "dayboard: init"
+chk "init: Commit ohne Trailer" eq "$(G "$B1" log -1 --format=%B | grep -c .)" 1
+chk "init: Autor und Committer" eq "$(G "$B1" log -1 --format='%an <%ae> | %cn <%ce>')" "Tester <t@example.invalid> | Tester <t@example.invalid>"
+chk "init: Branch main" eq "$(G "$B1" symbolic-ref --short HEAD)" main
+chk "init: kein Remote" eq "$(G "$B1" remote | wc -l | tr -d ' ')" 0
+chk "init: Arbeitsbaum sauber" eq "$(G "$B1" status --porcelain)" ""
+chk "init: Config ohne user" eq "$(G "$B1" config --local --get user.name | wc -l | tr -d ' ')" 0
+
+H1=$(head_of "$B1"); S1=$(sum "$B1/DAYBOARD.md"); L1=$(sum "$B1/LOGBOOK.md")
+run init --dir "$B1" --date 2026-11-09
+chk "init2: exit 0" eq "$RC" 0
+chk "init2: HEAD gleich" eq "$(head_of "$B1")" "$H1"
+chk "init2: DAYBOARD unverändert" eq "$(sum "$B1/DAYBOARD.md")" "$S1"
+chk "init2: LOGBOOK unverändert" eq "$(sum "$B1/LOGBOOK.md")" "$L1"
+chk "init2: meldet vorhanden" has "$OUT" "vorhanden"
+
+B2="$T/b2"
+run init --dir "$B2" --seed "$SEED"
+chk "seed: exit 0" eq "$RC" 0
+chk "seed: Datei übernommen" cmp -s "$SEED" "$B2/DAYBOARD.md"
+chk "seed: committet" eq "$(G "$B2" rev-list --count HEAD)" 1
+run init --dir "$T/b2x" --seed "$T/nichtda.md"
+chk "seed fehlt: exit 2" eq "$RC" 2
+
+B3="$T/b3"; mkdir -p "$B3"; printf 'meins\n' > "$B3/DAYBOARD.md"
+run init --dir "$B3" --seed "$SEED"
+chk "bestehend: exit 0" eq "$RC" 0
+chk "bestehend: nicht überschrieben" eq "$(cat "$B3/DAYBOARD.md")" meins
+chk "bestehend: gemeldet" has "$OUT" "DAYBOARD.md: vorhanden"
+chk "bestehend: LOGBOOK angelegt" test -f "$B3/LOGBOOK.md"
+
+# innerhalb eines anderen Repos
+R="$T/outer"; git init -q -b main "$R"; git -C "$R" -c user.name=x -c user.email=x@x commit -q --allow-empty -m root
+rm -f "$R/.git/info/exclude"
+CFG=$(sum "$R/.git/config")
+run init --dir "$R/sub/board" --date 2026-11-04
+chk "outer: exit 0" eq "$RC" 0
+chk "outer: Eintrag in info/exclude" eq "$(grep -cx '/sub/board/' "$R/.git/info/exclude")" 1
+chk "outer: Hinweis" has "$OUT" "exclude"
+chk "outer: eigenes Repo" test -d "$R/sub/board/.git"
+chk "outer: Board unsichtbar" eq "$(G "$R" status --porcelain)" ""
+run init --dir "$R/sub/board" --date 2026-11-04
+chk "outer2: Eintrag nur einmal" eq "$(grep -cx '/sub/board/' "$R/.git/info/exclude")" 1
+chk "outer: keine .gitignore" test ! -e "$R/.gitignore"
+chk "outer: config unberührt" eq "$(sum "$R/.git/config")" "$CFG"
+printf 'foo' > "$R/.git/info/exclude"
+run init --dir "$R/sub/board" --date 2026-11-04
+chk "outer: Datei ohne Zeilenende" eq "$(cat "$R/.git/info/exclude")" "$(printf 'foo\n/sub/board/')"
+W="$T/wt"; git -C "$R" worktree add -q -b wtb "$W"
+run init --dir "$W/board2" --date 2026-11-04
+chk "worktree: exit 0" eq "$RC" 0
+chk "worktree: Eintrag in gemeinsamer Ausschlussdatei" eq "$(grep -cx '/board2/' "$(G "$W" rev-parse --path-format=absolute --git-path info/exclude)")" 1
+chk "worktree: Board unsichtbar" eq "$(G "$W" status --porcelain)" ""
+
+# Identität
+OUT=$(env -u DAY_GIT_NAME -u DAY_GIT_EMAIL "$DAY" init --dir "$T/b6" 2>&1); RC=$?
+chk "ohne Identität: exit 2" eq "$RC" 2
+chk "ohne Identität: Meldung" has "$OUT" "DAY_GIT_NAME"
+chk "ohne Identität: nichts angelegt" test ! -e "$T/b6"
+mkdir -p "$T/home2"; printf '[user]\n\tname = Glob\n\temail = g@example.invalid\n' > "$T/home2/.gitconfig"
+OUT=$(env -u DAY_GIT_NAME -u DAY_GIT_EMAIL HOME="$T/home2" "$DAY" init --dir "$T/b6" 2>&1); RC=$?
+chk "global Identität: exit 0" eq "$RC" 0
+chk "global Identität: Autor" eq "$(G "$T/b6" log -1 --format=%an)" Glob
+chk "global Identität: Committer-Mail" eq "$(G "$T/b6" log -1 --format=%ce)" g@example.invalid
+chk "global Identität: Config nicht geschrieben" eq "$(G "$T/b6" config --local --get user.name | wc -l | tr -d ' ')" 0
+
+# init --dry-run
+run init --dir "$T/b8" --seed "$SEED" --dry-run
+chk "init dry-run: exit 0" eq "$RC" 0
+chk "init dry-run: nichts angelegt" test ! -e "$T/b8"
+run init --dir "$R/sub/dry" --dry-run
+chk "init dry-run: exclude unberührt" eq "$(grep -c dry "$R/.git/info/exclude")" 0
+chk "init dry-run: Hinweis" has "$OUT" "exclude"
+
+# --- rollover ---
+run rollover --dir "$B1" --date 2026-11-04
+chk "rollover gleicher Tag: exit 0" eq "$RC" 0
+chk "rollover gleicher Tag: Meldung" eq "$OUT" "nothing to roll over"
+chk "rollover gleicher Tag: HEAD gleich" eq "$(head_of "$B1")" "$H1"
+
+B7="$T/b7"; run init --dir "$B7" --seed "$SEED"
+printf '\n## 2026-11-02\n- alt\n' >> "$B7/LOGBOOK.md"; G "$B7" add LOGBOOK.md; G "$B7" -c user.name=x -c user.email=x@x commit -q -m prep
+printf 'x\n' > "$B7/other.txt"; printf 'y\n' > "$B7/staged.txt"; G "$B7" add staged.txt
+cp "$B7/DAYBOARD.md" "$T/old.md"; cp "$B7/LOGBOOK.md" "$T/oldlog.md"
+sed -n '/stw:begin/,/stw:end/p' "$B7/DAYBOARD.md" > "$T/facts.before"
+H7=$(head_of "$B7")
+run rollover --dir "$B7" --date 2026-11-05 --dry-run
+chk "rollover dry-run: exit 0" eq "$RC" 0
+chk "rollover dry-run: DAYBOARD unverändert" cmp -s "$T/old.md" "$B7/DAYBOARD.md"
+chk "rollover dry-run: LOGBOOK unverändert" cmp -s "$T/oldlog.md" "$B7/LOGBOOK.md"
+chk "rollover dry-run: HEAD gleich" eq "$(head_of "$B7")" "$H7"
+run rollover --dir "$B7" --date 2026-11-05
+chk "rollover: exit 0" eq "$RC" 0
+chk "rollover: Kopfzeile" eq "$(head -1 "$B7/DAYBOARD.md")" "# Dayboard (Stand 2026-11-05)"
+chk "rollover: Logbuch-Block" has "$(cat "$B7/LOGBOOK.md")" "## 2026-11-03"
+chk "rollover: Logbuch-Zeilen" has "$(tail -3 "$B7/LOGBOOK.md")" "- done zwei ä"
+chk "rollover: Logbuch-Anfang unverändert" cmp -s "$T/oldlog.md" <(head -c "$(wc -c < "$T/oldlog.md")" "$B7/LOGBOOK.md")
+chk "rollover: Logbuch genau 2 Zeilen angehängt" eq "$(($(wc -l < "$B7/LOGBOOK.md")-$(wc -l < "$T/oldlog.md")))" 4
+sed -e 's/^# Dayboard (Stand 2026-11-03)/# Dayboard (Stand 2026-11-05)/' -e '/^- done/d' "$T/old.md" > "$T/expect.md"
+chk "rollover: Board bis auf Kopf/Erledigt gleich" cmp -s "$T/expect.md" "$B7/DAYBOARD.md"
+chk "rollover: Überschrift Erledigt bleibt" grep -qx '## Erledigt heute' "$B7/DAYBOARD.md"
+sed -n '/stw:begin/,/stw:end/p' "$B7/DAYBOARD.md" > "$T/facts.after"
+chk "rollover: Fakten-Block byte-gleich" cmp -s "$T/facts.before" "$T/facts.after"
+chk "rollover: Betreff" eq "$(G "$B7" log -1 --format=%s)" "dayboard: 2026-11-03"
+chk "rollover: genau 2 Dateien" eq "$(G "$B7" show --name-only --format= HEAD | wc -l | tr -d ' ')" 2
+chk "rollover: fremde Datei unberührt" eq "$(G "$B7" status --porcelain | sort | tr '\n' ';')" "?? other.txt;A  staged.txt;"
+chk "rollover: Commit ohne Trailer" eq "$(G "$B7" log -1 --format=%B | grep -c .)" 1
+chk "rollover: Autor" eq "$(G "$B7" log -1 --format='%an|%cn')" "Tester|Tester"
+run rollover --dir "$B7" --date 2026-11-05
+chk "rollover danach: nichts mehr" eq "$OUT" "nothing to roll over"
+
+B9="$T/b9"; run init --dir "$B9" --seed "$EMPTY"
+cp "$B9/LOGBOOK.md" "$T/log9"; H9=$(head_of "$B9")
+run rollover --dir "$B9" --date 2026-11-05
+chk "rollover leer: exit 0" eq "$RC" 0
+chk "rollover leer: Kopfzeile" eq "$(head -1 "$B9/DAYBOARD.md")" "# Dayboard (Stand 2026-11-05)"
+chk "rollover leer: Logbuch unverändert" cmp -s "$T/log9" "$B9/LOGBOOK.md"
+chk "rollover leer: Commit" eq "$(G "$B9" rev-list --count HEAD)" 2
+chk "rollover leer: Rest gleich" cmp -s <(sed 1d "$EMPTY") <(sed 1d "$B9/DAYBOARD.md")
+B10="$T/b10"; mkdir -p "$B10"; cp "$SEED" "$B10/DAYBOARD.md"
+run rollover --dir "$B10" --date 2026-11-05
+chk "rollover ohne Repo: exit 2" eq "$RC" 2
+chk "rollover ohne Repo: nichts geschrieben" cmp -s "$SEED" "$B10/DAYBOARD.md"
+run rollover --dir "$T/gibtsnicht"
+chk "rollover ohne Board: exit 2" eq "$RC" 2
+
+# --- check ---
+C="$T/c"; mkboard "$C" 2026-11-04 1 3 5
+checkrun "$C"
+chk "check sauber: exit 0" eq "$RC" 0
+chk "check sauber: still" eq "$OUT" ""
+mkboard "$C" 2026-11-03 0 0 0; checkrun "$C"
+chk "check Datum: exit 1" eq "$RC" 1
+chk "check Datum: Meldung" has "$OUT" "Kopfzeile: Datum 2026-11-03 ungleich heute 2026-11-04"
+chk "check Datum: nur ein Fund" eq "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" 1
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" '1s/.*/Dayboard/'; checkrun "$C"
+chk "check Kopfzeile ungültig" has "$OUT" "Kopfzeile: fehlt"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" '/^## Geparkt/d'; checkrun "$C"
+chk "check Abschnitt fehlt" eq "$OUT" "Geparkt: Abschnitt fehlt"
+mkboard "$C" 2026-11-04 2 0 0; checkrun "$C"
+chk "check Jetzt 2: Fund" eq "$OUT" "Jetzt: 2 Einträge (max 1)"
+mkboard "$C" 2026-11-04 0 4 0; checkrun "$C"
+chk "check Heute 4: Fund" eq "$OUT" "Heute: 4 Einträge (max 3)"
+mkboard "$C" 2026-11-04 0 0 6; checkrun "$C"
+chk "check Wartet 6: Fund" eq "$OUT" "Wartet auf Owner: 6 Einträge (max 5)"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" 's/^## Heute/&\
+- erste\
+  Fortsetzung/'; checkrun "$C"
+chk "check mehrzeilig" eq "$OUT" "Heute: Zeile 7 ist kein einzeiliger Eintrag"
+L240=$(printf 'x%.0s' $(seq 1 238)); L241=$(printf 'x%.0s' $(seq 1 239))
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" "s/^## Geparkt/&\\
+- $L240/"; checkrun "$C"
+chk "check 240 Zeichen: sauber" eq "$RC" 0
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" "s/^## Geparkt/&\\
+- $L241/"; checkrun "$C"
+chk "check 241 Zeichen: Fund" has "$OUT" "Geparkt: Zeile 10 hat 241 Zeichen (max 240)"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" '/stw:/d;/^facts$/d'; checkrun "$C"
+chk "check Markierungen fehlen" eq "$OUT" "Fakten-Block: Markierungen fehlen"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" '/stw:end/d'; checkrun "$C"
+chk "check end fehlt" has "$OUT" "Fakten-Block: <!-- stw:end --> fehlt"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" '/stw:begin/d'; checkrun "$C"
+chk "check begin fehlt" has "$OUT" "Fakten-Block: <!-- stw:begin --> fehlt"
+checkrun "$T/gibtsnicht"
+chk "check ohne Board: exit 2" eq "$RC" 2
+run check --dir "$C" --date 2026-13-01
+chk "falsches Datum: exit 2" eq "$RC" 2
+run bogus
+chk "unbekannter Befehl: exit 2" eq "$RC" 2
+run check --dir "$B7" --date 2026-11-05
+chk "check nach rollover: sauber" eq "$RC" 0
+
+echo "tests: $PASS passed, $FAILN failed"
+[ "$FAILN" -eq 0 ] && TESTRC=0 || TESTRC=1
+
+# --- Mutationen ---
+if [ "${1:-}" = "--no-mutations" ]; then exit $TESTRC; fi
+MP=0; MO=0
+mut() { # label-erwartet  alt  neu
+  local d="$T/mut$((MP+MO))"; mkdir -p "$d"; cp "$HERE/day" "$HERE/day.py" "$d/"
+  if ! python3 -I - "$d/day.py" "$2" "$3" <<'PY'
+import sys
+p, a, b = sys.argv[1:]
+s = open(p, encoding="utf-8").read()
+if s.count(a) < 1: sys.exit(1)
+open(p, "w", encoding="utf-8").write(s.replace(a, b, 1))
+PY
+  then echo "OFFEN (Muster nicht gefunden): $1"; MO=$((MO+1)); return; fi
+  local o; o=$(DAY="$d/day" "$HERE/test-day" --no-mutations 2>&1)
+  if printf '%s\n' "$o" | grep -qxF "FAIL: $1"; then MP=$((MP+1)); else echo "OFFEN (Mutation lebt): $1"; MO=$((MO+1)); fi
+}
+mut "init: Commit-Betreff" '"dayboard: init"' '"init"'
+mut "init: Branch main" '"init", "-q", "-b", "main"' '"init", "-q"'
+mut "init2: DAYBOARD unverändert" 'if os.path.exists(p):' 'if False:'
+mut "bestehend: nicht überschrieben" 'if os.path.exists(p):' 'if False:'
+mut "init: 5 Abschnitte" 'SECS = ["Jetzt", "Heute", "Wartet auf Owner", "Geparkt", "Erledigt heute"]' 'SECS = ["Jetzt", "Heute", "Wartet auf Owner", "Geparkt"]'
+mut "outer2: Eintrag nur einmal" 'if line in cur.splitlines():' 'if False:'
+mut "outer: Datei ohne Zeilenende" '("" if cur == "" or cur.endswith("\n") else "\n")' '""'
+mut "outer: Eintrag in info/exclude" '"info/exclude"' '"info/exclude2"'
+mut "worktree: Eintrag in gemeinsamer Ausschlussdatei" 'git(top, "rev-parse", "--git-path", "info/exclude").stdout.strip()' '".git/info/exclude"'
+mut "ohne Identität: Meldung" 'if not (n and e):' 'if False:'
+mut "ohne Identität: exit 2" 'print("day: %s" % e, file=sys.stderr)
+        return 2' 'print("day: %s" % e, file=sys.stderr)
+        return 1'
+mut "global Identität: Autor" '"config", "--global", "--get", "user.name"' '"config", "--get", "user.nope"'
+mut "global Identität: Config nicht geschrieben" 'ident=ident)' 'ident=ident); git(d, "config", "user.name", "x") if ident else 0'
+mut "init: kein Remote" 'git(d, "init", "-q", "-b", "main")' 'git(d, "init", "-q", "-b", "main"); git(d, "remote", "add", "o", "/nonexistent")'
+mut "init dry-run: nichts angelegt" 'if not dry:
+        os.makedirs(d, exist_ok=True)' 'if True:
+        os.makedirs(d, exist_ok=True)'
+mut "rollover gleicher Tag: Meldung" '"nothing to roll over"' '"nichts"'
+mut "rollover dry-run: DAYBOARD unverändert" 'if a.dry_run:
+        print("dry-run: %d' 'if False:
+        print("dry-run: %d'
+mut "rollover: Logbuch-Zeilen" '"\n".join(done)' '"\n".join(done[:1])'
+mut "rollover: Kopfzeile" 'new[0] = "# Dayboard (Stand %s)" % a.date' 'new[0] = lines[0]'
+mut "rollover: Board bis auf Kopf/Erledigt gleich" 'span = lines[s:e] if not done else' 'span = [] if True else'
+mut "rollover: Betreff" '"dayboard: " + old' '"dayboard: " + a.date'
+mut "rollover: genau 2 Dateien" '["DAYBOARD.md", "LOGBOOK.md"], ident)' '["DAYBOARD.md", "LOGBOOK.md", "other.txt"], ident)'
+mut "rollover: fremde Datei unberührt" 'git(d, "commit", "-q", "-m", msg, "--", *paths, ident=ident)' 'git(d, "commit", "-q", "-a", "-m", msg, ident=ident)'
+mut "rollover: Logbuch-Anfang unverändert" 'log = read(lp) if os.path.exists(lp) else LOGBOOK' 'log = LOGBOOK'
+mut "rollover: Fakten-Block byte-gleich" 'new = lines[:s] + span + lines[e:]' 'new = lines[:s] + span + lines[e:]; new = [l.rstrip() for l in new]'
+mut "rollover: Überschrift Erledigt bleibt" 'new = lines[:s] + span + lines[e:]' 'new = lines[:s - 1] + span + lines[e:]'
+mut "rollover leer: Logbuch unverändert" 'if done:
+        sep' 'if True:
+        sep'
+mut "rollover ohne Repo: nichts geschrieben" 'if not os.path.exists(os.path.join(d, ".git")):
+        raise Die("kein' 'if False:
+        raise Die("kein'
+mut "check Datum: Meldung" 'm.group(1) != a.date' 'False'
+mut "check Abschnitt fehlt" 'f.append("%s: Abschnitt fehlt" % n)' 'pass'
+mut "check Jetzt 2: Fund" '"Jetzt": 1' '"Jetzt": 2'
+mut "check Heute 4: Fund" '"Heute": 3' '"Heute": 4'
+mut "check Wartet 6: Fund" '"Wartet auf Owner": 5' '"Wartet auf Owner": 6'
+mut "check mehrzeilig" 'f.append("%s: Zeile %d ist kein einzeiliger Eintrag" % (n, i + 1))' 'pass'
+mut "check 240 Zeichen: sauber" 'MAXLEN = 240' 'MAXLEN = 239'
+mut "check 241 Zeichen: Fund" 'MAXLEN = 240' 'MAXLEN = 241'
+mut "check Markierungen fehlen" 'f.append("Fakten-Block: Markierungen fehlen")' 'pass'
+mut "check end fehlt" 'elif not b or not en:' 'elif not b:'
+mut "check begin fehlt" 'elif not b or not en:' 'elif not en:'
+mut "check sauber: exit 0" 'return 1 if f else 0' 'return 1'
+mut "check Datum: exit 1" 'return 1 if f else 0' 'return 0'
+mut "falsches Datum: exit 2" 'datetime.date.fromisoformat(s).isoformat()' 's'
+echo "mutations: $MP proven, $MO open"
+[ "$MO" -eq 0 ] && exit $TESTRC || exit 1
