@@ -10,7 +10,7 @@
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 DAY=${DAY:-$HERE/day}
-BASE=/Users/werner/.claude/jobs/9bfdaf3d/tmp
+BASE=${TMPDIR:-/tmp}
 T=$(mktemp -d "$BASE/daytest.XXXXXX") || exit 1
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/home"
