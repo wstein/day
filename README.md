@@ -10,7 +10,7 @@ Files: `day` (bash launcher, resolves its own location, follows symlinks), `day.
     ./day --help
     DAY_DIR=/path/to/dayboard ./day check
 
-The dayboard data folder is passed with `--dir` or `$DAY_DIR` (default `~/Workspaces/dayboard`). It is not part of this
+The dayboard data folder is passed with `--dir` or `$DAY_DIR` (default: `./dayboard` in the git top level of the current directory; otherwise an error, exit 2). It is not part of this
 folder and is not tracked here.
 
 ## Tests

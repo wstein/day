@@ -196,9 +196,23 @@ def isodate(s):
         raise argparse.ArgumentTypeError("JJJJ-MM-TT erwartet: %s" % s)
 
 
+def resolve_dir(given):
+    """--dir, then $DAY_DIR, then ./dayboard in the git top level of the current directory; no fixed path."""
+    d = given or os.environ.get("DAY_DIR")
+    if not d:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        top = r.stdout.strip() if r.returncode == 0 else ""
+        if top and os.path.isdir(os.path.join(top, "dayboard")):
+            d = os.path.join(top, "dayboard")
+    if not d:
+        print("day: kein Dayboard-Verzeichnis: --dir oder $DAY_DIR angeben (oder ./dayboard im Git-Toplevel)", file=sys.stderr)
+        sys.exit(2)
+    return os.path.realpath(os.path.expanduser(d))
+
+
 def main(argv):
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--dir", help="Dayboard-Verzeichnis (Default $DAY_DIR, sonst ~/Workspaces/dayboard)")
+    common.add_argument("--dir", help="Dayboard-Verzeichnis (Default $DAY_DIR, sonst ./dayboard im Git-Toplevel)")
     common.add_argument("--date", type=isodate, help="Datum JJJJ-MM-TT (Default heute, zum Testen)")
     ap = argparse.ArgumentParser(prog="day")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -210,7 +224,7 @@ def main(argv):
     sub.add_parser("check", parents=[common], help="Verstöße melden (Exit 1 bei Funden)")
     a = ap.parse_args(argv)
     a.date = a.date or datetime.date.today().isoformat()
-    a.dir = os.path.realpath(os.path.expanduser(a.dir or os.environ.get("DAY_DIR") or "~/Workspaces/dayboard"))
+    a.dir = resolve_dir(a.dir)
     try:
         return {"init": cmd_init, "rollover": cmd_rollover, "check": cmd_check}[a.cmd](a)
     except Die as e:

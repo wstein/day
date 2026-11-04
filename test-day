@@ -222,6 +222,25 @@ chk "unbekannter Befehl: exit 2" eq "$RC" 2
 run check --dir "$B7" --date 2026-11-05
 chk "check nach rollover: sauber" eq "$RC" 0
 
+# --- Kein fester Pfad: Board nur per --dir, $DAY_DIR oder ./dayboard im Git-Toplevel ---
+mkdir -p "$T/nogit" "$T/gr/sub"
+OUT=$(cd "$T/nogit" && "$DAY" check --date 2026-11-04 2>&1); RC=$?
+chk "ohne Ziel ausserhalb Git: exit 2" eq "$RC" 2
+chk "ohne Ziel: Hinweis auf --dir" has "$OUT" "--dir"
+chk "ohne Ziel: HOME unberührt" test ! -e "$T/home/Work""spaces"
+git init -q "$T/gr"; mkboard "$T/gr/dayboard" 2026-11-04 0 0 0
+OUT=$(cd "$T/gr/sub" && "$DAY" check --date 2026-11-04 2>&1); RC=$?
+chk "./dayboard im Git-Toplevel wird genutzt" eq "$RC" 0
+mkboard "$T/gr/dayboard" 2026-11-04 2 0 0
+OUT=$(cd "$T/gr/sub" && "$DAY" check --date 2026-11-04 2>&1); RC=$?
+chk "./dayboard im Git-Toplevel: Fund gemeldet" eq "$RC" 1
+mkboard "$T/envb" 2026-11-04 0 0 0
+OUT=$(cd "$T/gr/sub" && DAY_DIR="$T/envb" "$DAY" check --date 2026-11-04 2>&1); RC=$?
+chk "DAY_DIR geht vor ./dayboard" eq "$RC" 0
+# Guard: kein maschinengebundener Pfad in den Skripten
+GUARD_DIR=$(cd "$(dirname "$DAY")" && pwd)
+chk "Guard: keine festen Benutzerpfade" test -z "$(grep -rnE '/Use''rs/|Work''spaces|go-scr''ipts|\.claude/jo''bs' "$GUARD_DIR" 2>/dev/null)"
+
 echo "tests: $PASS passed, $FAILN failed"
 [ "$FAILN" -eq 0 ] && TESTRC=0 || TESTRC=1
 
@@ -293,5 +312,13 @@ mut "check begin fehlt" 'elif not b or not en:' 'elif not en:'
 mut "check sauber: exit 0" 'return 1 if f else 0' 'return 1'
 mut "check Datum: exit 1" 'return 1 if f else 0' 'return 0'
 mut "falsches Datum: exit 2" 'datetime.date.fromisoformat(s).isoformat()' 's'
+mutpath() { # Guard-Mutation: fester Pfad in day.py muss den Guard fallen lassen
+  local d="$T/mutpath"; mkdir -p "$d"; cp "$HERE/day" "$HERE/day.py" "$d/"
+  printf '# /Use''rs/x\n' >> "$d/day.py"
+  local o; o=$(DAY="$d/day" "$HERE/test-day" --no-mutations 2>&1)
+  if printf '%s\n' "$o" | grep -qxF "FAIL: Guard: keine festen Benutzerpfade"; then MP=$((MP+1)); else echo "OFFEN (Mutation lebt): Guard"; MO=$((MO+1)); fi
+}
+mutpath
+mut "ohne Ziel: Hinweis auf --dir" '--dir oder $DAY_DIR angeben' 'angeben'
 echo "mutations: $MP proven, $MO open"
 [ "$MO" -eq 0 ] && exit $TESTRC || exit 1
