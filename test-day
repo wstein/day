@@ -44,6 +44,8 @@ chk "init: DAYBOARD.md Kopfzeile" eq "$(head -1 "$B1/DAYBOARD.md")" "# Dayboard 
 chk "init: 5 Abschnitte" eq "$(grep -c '^## ' "$B1/DAYBOARD.md")" 5
 chk "init: leerer Fakten-Block" eq "$(grep -c 'stw:' "$B1/DAYBOARD.md")" 2
 chk "init: LOGBOOK append-only" grep -q 'append-only' "$B1/LOGBOOK.md"
+chk "init: BACKLOG angelegt" grep -q '^## Next' "$B1/BACKLOG.md"
+chk "init: BACKLOG im Commit" has "$(G "$B1" ls-files)" "BACKLOG.md"
 chk "init: ein Commit" eq "$(G "$B1" rev-list --count HEAD)" 1
 chk "init: Commit-Betreff" eq "$(G "$B1" log -1 --format=%s)" "dayboard: init"
 chk "init: Commit ohne Trailer" eq "$(G "$B1" log -1 --format=%B | grep -c .)" 1
@@ -53,11 +55,12 @@ chk "init: kein Remote" eq "$(G "$B1" remote | wc -l | tr -d ' ')" 0
 chk "init: Arbeitsbaum sauber" eq "$(G "$B1" status --porcelain)" ""
 chk "init: Config ohne user" eq "$(G "$B1" config --local --get user.name | wc -l | tr -d ' ')" 0
 
-H1=$(head_of "$B1"); S1=$(sum "$B1/DAYBOARD.md"); L1=$(sum "$B1/LOGBOOK.md")
+H1=$(head_of "$B1"); S1=$(sum "$B1/DAYBOARD.md"); L1=$(sum "$B1/LOGBOOK.md"); BL1=$(sum "$B1/BACKLOG.md")
 run init --dir "$B1" --date 2026-11-09
 chk "init2: exit 0" eq "$RC" 0
 chk "init2: HEAD gleich" eq "$(head_of "$B1")" "$H1"
 chk "init2: DAYBOARD unverändert" eq "$(sum "$B1/DAYBOARD.md")" "$S1"
+chk "init2: BACKLOG unverändert" eq "$(sum "$B1/BACKLOG.md")" "$BL1"
 chk "init2: LOGBOOK unverändert" eq "$(sum "$B1/LOGBOOK.md")" "$L1"
 chk "init2: meldet vorhanden" has "$OUT" "vorhanden"
 
@@ -118,6 +121,7 @@ chk "init dry-run: nichts angelegt" test ! -e "$T/b8"
 run init --dir "$R/sub/dry" --dry-run
 chk "init dry-run: exclude unberührt" eq "$(grep -c dry "$R/.git/info/exclude")" 0
 chk "init dry-run: Hinweis" has "$OUT" "exclude"
+chk "init dry-run: BACKLOG gemeldet" has "$OUT" "BACKLOG.md: angelegt"
 
 # --- rollover ---
 run rollover --dir "$B1" --date 2026-11-04
@@ -237,6 +241,7 @@ OUT=$(cd "$T/gi/sub" && "$DAY" init 2>&1); RC=$?
 chk "init ohne --dir im Git-Repo: exit 0" eq "$RC" 0
 chk "init ohne --dir: DAYBOARD.md angelegt" test -f "$T/gi/dayboard/DAYBOARD.md"
 chk "init ohne --dir: LOGBOOK.md angelegt" test -f "$T/gi/dayboard/LOGBOOK.md"
+chk "init ohne --dir: BACKLOG.md angelegt" test -f "$T/gi/dayboard/BACKLOG.md"
 chk "init ohne --dir: eigenes Repo" test -d "$T/gi/dayboard/.git"
 chk "init ohne --dir: Exclude-Eintrag" grep -qxF "/dayboard/" "$T/gi/.git/info/exclude"
 OUT=$(cd "$T/nogit" && GIT_CEILING_DIRECTORIES="$T" "$DAY" init 2>&1); RC=$?

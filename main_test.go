@@ -117,7 +117,7 @@ func TestInitCreatesDefaultDayboard(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("init rc=%d stderr=%s", rc, se)
 	}
-	for _, f := range []string{"DAYBOARD.md", "LOGBOOK.md", ".git"} {
+	for _, f := range []string{"DAYBOARD.md", "LOGBOOK.md", "BACKLOG.md", ".git"} {
 		if _, err := os.Stat(filepath.Join(top, "dayboard", f)); err != nil {
 			t.Errorf("missing %s: %v", f, err)
 		}

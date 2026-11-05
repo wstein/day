@@ -21,6 +21,7 @@ const (
 	end     = "<!-- stw:end -->"
 	maxLen  = 240
 	logbook = "# Logbuch\n\nHinweis: append-only. Pro Tag ein Block `## JJJJ-MM-TT`, nichts Bestehendes ändern.\n"
+	backlog = "# Backlog\n\nRegeln: eine Zeile pro Eintrag (Was, Fertig wenn, Ziel, Link). Nicht Jetzt/Heute; was dran ist, geht ins Dayboard.\n\n## Next\n\n## Later\n\n## Ideas\n"
 )
 
 var headRe = regexp.MustCompile(`^# Dayboard \(Stand (\d{4}-\d{2}-\d{2})\)$`)
@@ -225,8 +226,8 @@ func cmdInit(a args) int {
 	if haveSeed {
 		board = seed
 	}
-	names := []string{"DAYBOARD.md", "LOGBOOK.md"}
-	texts := []string{board, logbook}
+	names := []string{"DAYBOARD.md", "LOGBOOK.md", "BACKLOG.md"}
+	texts := []string{board, logbook, backlog}
 	var created []string
 	for i, name := range names {
 		p := filepath.Join(d, name)
@@ -420,7 +421,7 @@ func resolveDir(given string, create bool) string {
 
 const usage = `usage: day [-h] {init,rollover,check} ...
 
-  init       Verzeichnis, Repo, Dateien anlegen   [--dir D] [--date JJJJ-MM-TT] [--seed FILE] [--dry-run]
+  init       Verzeichnis, Repo, DAYBOARD/LOGBOOK/BACKLOG.md anlegen [--dir D] [--date JJJJ-MM-TT] [--seed FILE] [--dry-run]
   rollover   Tageswechsel ins Logbuch             [--dir D] [--date JJJJ-MM-TT] [--dry-run]
   check      Verstöße melden (Exit 1 bei Funden)  [--dir D] [--date JJJJ-MM-TT]
 
