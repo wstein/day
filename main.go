@@ -388,7 +388,8 @@ func cmdCheck(a args) int {
 }
 
 // resolveDir: --dir, then $DAY_DIR, then ./dayboard in the git top level of the current directory; no fixed path.
-func resolveDir(given string) string {
+// The git default must already exist unless the board is to be created (init).
+func resolveDir(given string, create bool) string {
 	d := given
 	if d == "" {
 		d = os.Getenv("DAY_DIR")
@@ -396,13 +397,17 @@ func resolveDir(given string) string {
 	if d == "" {
 		c := exec.Command("git", "rev-parse", "--show-toplevel")
 		if out, err := c.Output(); err == nil {
-			if top := strings.TrimSpace(string(out)); top != "" && isDir(filepath.Join(top, "dayboard")) {
+			if top := strings.TrimSpace(string(out)); top != "" && (create || isDir(filepath.Join(top, "dayboard"))) {
 				d = filepath.Join(top, "dayboard")
 			}
 		}
 	}
 	if d == "" {
-		fmt.Fprintln(os.Stderr, "day: kein Dayboard-Verzeichnis: --dir oder $DAY_DIR angeben (oder ./dayboard im Git-Toplevel)")
+		if create {
+			fmt.Fprintln(os.Stderr, "day: kein Dayboard-Verzeichnis: --dir oder $DAY_DIR angeben (oder in einem Git-Repository ausführen, dann wird ./dayboard im Git-Toplevel angelegt)")
+		} else {
+			fmt.Fprintln(os.Stderr, "day: kein Dayboard-Verzeichnis: --dir oder $DAY_DIR angeben (oder ./dayboard im Git-Toplevel)")
+		}
 		os.Exit(2)
 	}
 	if d == "~" || strings.HasPrefix(d, "~/") {
@@ -419,7 +424,7 @@ const usage = `usage: day [-h] {init,rollover,check} ...
   rollover   Tageswechsel ins Logbuch             [--dir D] [--date JJJJ-MM-TT] [--dry-run]
   check      Verstöße melden (Exit 1 bei Funden)  [--dir D] [--date JJJJ-MM-TT]
 
---dir: Dayboard-Verzeichnis (Default $DAY_DIR, sonst ./dayboard im Git-Toplevel)
+--dir: Dayboard-Verzeichnis (Default $DAY_DIR, sonst ./dayboard im Git-Toplevel; init legt es an)
 --date: Datum JJJJ-MM-TT (Default heute, zum Testen)
 `
 
@@ -486,7 +491,7 @@ func run(argv []string) (rc int) {
 	if a.date == "" {
 		a.date = time.Now().Format("2006-01-02")
 	}
-	a.dir = resolveDir(a.dir)
+	a.dir = resolveDir(a.dir, a.cmd == "init")
 	defer func() {
 		if r := recover(); r != nil {
 			d, ok := r.(die)

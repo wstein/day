@@ -231,6 +231,21 @@ chk "./dayboard im Git-Toplevel: Fund gemeldet" eq "$RC" 1
 mkboard "$T/envb" 2026-11-04 0 0 0
 OUT=$(cd "$T/gr/sub" && DAY_DIR="$T/envb" "$DAY" check --date 2026-11-04 2>&1); RC=$?
 chk "DAY_DIR geht vor ./dayboard" eq "$RC" 0
+# init legt ./dayboard im Git-Toplevel an, auch wenn es noch fehlt
+git init -q "$T/gi"; mkdir -p "$T/gi/sub"
+OUT=$(cd "$T/gi/sub" && "$DAY" init 2>&1); RC=$?
+chk "init ohne --dir im Git-Repo: exit 0" eq "$RC" 0
+chk "init ohne --dir: DAYBOARD.md angelegt" test -f "$T/gi/dayboard/DAYBOARD.md"
+chk "init ohne --dir: LOGBOOK.md angelegt" test -f "$T/gi/dayboard/LOGBOOK.md"
+chk "init ohne --dir: eigenes Repo" test -d "$T/gi/dayboard/.git"
+chk "init ohne --dir: Exclude-Eintrag" grep -qxF "/dayboard/" "$T/gi/.git/info/exclude"
+OUT=$(cd "$T/nogit" && GIT_CEILING_DIRECTORIES="$T" "$DAY" init 2>&1); RC=$?
+chk "init ohne Ziel ausserhalb Git: exit 2" eq "$RC" 2
+chk "init ohne Ziel: Hinweis auf --dir" has "$OUT" "--dir"
+git init -q "$T/gn"
+OUT=$(cd "$T/gn" && "$DAY" rollover --date 2026-11-04 2>&1); RC=$?
+chk "rollover ohne ./dayboard: exit 2" eq "$RC" 2
+chk "rollover ohne ./dayboard: nichts angelegt" test ! -e "$T/gn/dayboard"
 # Guard: kein maschinengebundener Pfad in den Skripten
 GUARD_DIR=$(cd "$(dirname "$DAY")" && pwd)
 chk "Guard: keine festen Benutzerpfade" test -z "$(grep -rnE --include='*.go' --include=README.md '/Use''rs/|Work''spaces|go-scr''ipts|\.claude/jo''bs' "$GUARD_DIR" 2>/dev/null)"
