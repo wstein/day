@@ -21,7 +21,8 @@ In the whr dev container `whr-up` installs it like the other tools; a failed ins
     DAY_DIR=/path/to/dayboard ./day check
 
 The dayboard data folder is passed with `--dir` or `$DAY_DIR` (default: `./dayboard` in the git top level of the
-current directory; otherwise an error, exit 2). In a workspace it is `./dayboard`, listed in the workspace `.gitignore`.
+current directory; otherwise an error, exit 2). `init` creates `./dayboard` if it does not exist yet; `rollover` and
+`check` need an existing board. In a workspace it is `./dayboard`, listed in the workspace `.gitignore`.
 It is not part of this folder and is not tracked here.
 
 ## Tests
