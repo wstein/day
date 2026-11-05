@@ -1,7 +1,7 @@
 # day
 
-Small dayboard tool: `init`, `rollover` and `check` for a dayboard folder (`DAYBOARD.md`, `LOGBOOK.md`, own local git
-repository). One static Go binary, standard library only, no Python, no push, no remote. Needs `git` at run time.
+Small dayboard tool: `init`, `rollover` and `check` for a dayboard folder (`DAYBOARD.md`, `LOGBOOK.md`, `BACKLOG.md`, own local
+git repository). One static Go binary, standard library only, no Python, no push, no remote. Needs `git` at run time.
 
 ## Install
 
@@ -21,7 +21,8 @@ In the whr dev container `whr-up` installs it like the other tools; a failed ins
     DAY_DIR=/path/to/dayboard ./day check
 
 The dayboard data folder is passed with `--dir` or `$DAY_DIR` (default: `./dayboard` in the git top level of the
-current directory; otherwise an error, exit 2). `init` creates `./dayboard` if it does not exist yet; `rollover` and
+current directory; otherwise an error, exit 2). `init` creates `./dayboard` if it does not exist yet, with `DAYBOARD.md`, `LOGBOOK.md` and a `BACKLOG.md` template
+(existing files are left unchanged; `rollover` and `check` do not touch `BACKLOG.md`); `rollover` and
 `check` need an existing board. In a workspace it is `./dayboard`, listed in the workspace `.gitignore`.
 It is not part of this folder and is not tracked here.
 
