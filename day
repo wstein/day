@@ -1,9 +1,0 @@
-#!/bin/bash
-# day: Dayboard-Werkzeug (init, rollover, check). Logik in day.py (Python-Standardbibliothek).
-SELF=$0
-while [ -h "$SELF" ]; do
-  L=$(readlink "$SELF")
-  case "$L" in /*) SELF=$L ;; *) SELF=$(dirname "$SELF")/$L ;; esac
-done
-HERE=$(cd "$(dirname "$SELF")" && pwd)
-exec python3 -I "$HERE/day.py" "$@"

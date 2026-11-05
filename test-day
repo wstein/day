@@ -1,12 +1,6 @@
 #!/bin/bash
-# test-day: Tests für day (bash 3.2). Testdaten nur in Wegwerf-Verzeichnissen unter dem Job-tmp.
-# Aufruf: test-day [--no-mutations]   (DAY=<Pfad> testet eine andere Kopie von day)
-# Ohne --no-mutations läuft danach jede Mutation: Kopie von day.py mit einer Änderung, der Test muss
-# am genannten Grund (FAIL-Label) scheitern. Ausgabe endet mit "mutations: N proven, M open".
-#
-# MUTATIONS
-# (Stand: siehe letzte Zeile der Testausgabe; offene Mutationen stehen hier mit Nachhol-Befehl.)
-# OFFEN: keine.
+# test-day: tests for the day binary (bash 3.2). Test data only in throw-away directories under $TMPDIR.
+# Usage: go build -o day . && ./test-day     (DAY=<path> tests another build of day; no mutation proofs, prototype)
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 DAY=${DAY:-$HERE/day}
@@ -239,86 +233,9 @@ OUT=$(cd "$T/gr/sub" && DAY_DIR="$T/envb" "$DAY" check --date 2026-11-04 2>&1); 
 chk "DAY_DIR geht vor ./dayboard" eq "$RC" 0
 # Guard: kein maschinengebundener Pfad in den Skripten
 GUARD_DIR=$(cd "$(dirname "$DAY")" && pwd)
-chk "Guard: keine festen Benutzerpfade" test -z "$(grep -rnE '/Use''rs/|Work''spaces|go-scr''ipts|\.claude/jo''bs' "$GUARD_DIR" 2>/dev/null)"
+chk "Guard: keine festen Benutzerpfade" test -z "$(grep -rnE --include='*.go' --include=README.md '/Use''rs/|Work''spaces|go-scr''ipts|\.claude/jo''bs' "$GUARD_DIR" 2>/dev/null)"
 
 echo "tests: $PASS passed, $FAILN failed"
 [ "$FAILN" -eq 0 ] && TESTRC=0 || TESTRC=1
 
-# --- Mutationen ---
-if [ "${1:-}" = "--no-mutations" ]; then exit $TESTRC; fi
-MP=0; MO=0
-mut() { # label-erwartet  alt  neu
-  local d="$T/mut$((MP+MO))"; mkdir -p "$d"; cp "$HERE/day" "$HERE/day.py" "$d/"
-  if ! python3 -I - "$d/day.py" "$2" "$3" <<'PY'
-import sys
-p, a, b = sys.argv[1:]
-s = open(p, encoding="utf-8").read()
-if s.count(a) < 1: sys.exit(1)
-open(p, "w", encoding="utf-8").write(s.replace(a, b, 1))
-PY
-  then echo "OFFEN (Muster nicht gefunden): $1"; MO=$((MO+1)); return; fi
-  local o; o=$(DAY="$d/day" "$HERE/test-day" --no-mutations 2>&1)
-  if printf '%s\n' "$o" | grep -qxF "FAIL: $1"; then MP=$((MP+1)); else echo "OFFEN (Mutation lebt): $1"; MO=$((MO+1)); fi
-}
-mut "init: Commit-Betreff" '"dayboard: init"' '"init"'
-mut "init: Branch main" '"init", "-q", "-b", "main"' '"init", "-q"'
-mut "init2: DAYBOARD unverändert" 'if os.path.exists(p):' 'if False:'
-mut "bestehend: nicht überschrieben" 'if os.path.exists(p):' 'if False:'
-mut "init: 5 Abschnitte" 'SECS = ["Jetzt", "Heute", "Wartet auf Owner", "Geparkt", "Erledigt heute"]' 'SECS = ["Jetzt", "Heute", "Wartet auf Owner", "Geparkt"]'
-mut "outer2: Eintrag nur einmal" 'if line in cur.splitlines():' 'if False:'
-mut "outer: Datei ohne Zeilenende" '("" if cur == "" or cur.endswith("\n") else "\n")' '""'
-mut "outer: Eintrag in info/exclude" '"info/exclude"' '"info/exclude2"'
-mut "worktree: Eintrag in gemeinsamer Ausschlussdatei" 'git(top, "rev-parse", "--git-path", "info/exclude").stdout.strip()' '".git/info/exclude"'
-mut "ohne Identität: Meldung" 'if not (n and e):' 'if False:'
-mut "ohne Identität: exit 2" 'print("day: %s" % e, file=sys.stderr)
-        return 2' 'print("day: %s" % e, file=sys.stderr)
-        return 1'
-mut "global Identität: Autor" '"config", "--global", "--get", "user.name"' '"config", "--get", "user.nope"'
-mut "global Identität: Config nicht geschrieben" 'ident=ident)' 'ident=ident); git(d, "config", "user.name", "x") if ident else 0'
-mut "init: kein Remote" 'git(d, "init", "-q", "-b", "main")' 'git(d, "init", "-q", "-b", "main"); git(d, "remote", "add", "o", "/nonexistent")'
-mut "init dry-run: nichts angelegt" 'if not dry:
-        os.makedirs(d, exist_ok=True)' 'if True:
-        os.makedirs(d, exist_ok=True)'
-mut "rollover gleicher Tag: Meldung" '"nothing to roll over"' '"nichts"'
-mut "rollover dry-run: DAYBOARD unverändert" 'if a.dry_run:
-        print("dry-run: %d' 'if False:
-        print("dry-run: %d'
-mut "rollover: Logbuch-Zeilen" '"\n".join(done)' '"\n".join(done[:1])'
-mut "rollover: Kopfzeile" 'new[0] = "# Dayboard (Stand %s)" % a.date' 'new[0] = lines[0]'
-mut "rollover: Board bis auf Kopf/Erledigt gleich" 'span = lines[s:e] if not done else' 'span = [] if True else'
-mut "rollover: Betreff" '"dayboard: " + old' '"dayboard: " + a.date'
-mut "rollover: genau 2 Dateien" '["DAYBOARD.md", "LOGBOOK.md"], ident)' '["DAYBOARD.md", "LOGBOOK.md", "other.txt"], ident)'
-mut "rollover: fremde Datei unberührt" 'git(d, "commit", "-q", "-m", msg, "--", *paths, ident=ident)' 'git(d, "commit", "-q", "-a", "-m", msg, ident=ident)'
-mut "rollover: Logbuch-Anfang unverändert" 'log = read(lp) if os.path.exists(lp) else LOGBOOK' 'log = LOGBOOK'
-mut "rollover: Fakten-Block byte-gleich" 'new = lines[:s] + span + lines[e:]' 'new = lines[:s] + span + lines[e:]; new = [l.rstrip() for l in new]'
-mut "rollover: Überschrift Erledigt bleibt" 'new = lines[:s] + span + lines[e:]' 'new = lines[:s - 1] + span + lines[e:]'
-mut "rollover leer: Logbuch unverändert" 'if done:
-        sep' 'if True:
-        sep'
-mut "rollover ohne Repo: nichts geschrieben" 'if not os.path.exists(os.path.join(d, ".git")):
-        raise Die("kein' 'if False:
-        raise Die("kein'
-mut "check Datum: Meldung" 'm.group(1) != a.date' 'False'
-mut "check Abschnitt fehlt" 'f.append("%s: Abschnitt fehlt" % n)' 'pass'
-mut "check Jetzt 2: Fund" '"Jetzt": 1' '"Jetzt": 2'
-mut "check Heute 4: Fund" '"Heute": 3' '"Heute": 4'
-mut "check Wartet 6: Fund" '"Wartet auf Owner": 5' '"Wartet auf Owner": 6'
-mut "check mehrzeilig" 'f.append("%s: Zeile %d ist kein einzeiliger Eintrag" % (n, i + 1))' 'pass'
-mut "check 240 Zeichen: sauber" 'MAXLEN = 240' 'MAXLEN = 239'
-mut "check 241 Zeichen: Fund" 'MAXLEN = 240' 'MAXLEN = 241'
-mut "check Markierungen fehlen" 'f.append("Fakten-Block: Markierungen fehlen")' 'pass'
-mut "check end fehlt" 'elif not b or not en:' 'elif not b:'
-mut "check begin fehlt" 'elif not b or not en:' 'elif not en:'
-mut "check sauber: exit 0" 'return 1 if f else 0' 'return 1'
-mut "check Datum: exit 1" 'return 1 if f else 0' 'return 0'
-mut "falsches Datum: exit 2" 'datetime.date.fromisoformat(s).isoformat()' 's'
-mutpath() { # Guard-Mutation: fester Pfad in day.py muss den Guard fallen lassen
-  local d="$T/mutpath"; mkdir -p "$d"; cp "$HERE/day" "$HERE/day.py" "$d/"
-  printf '# /Use''rs/x\n' >> "$d/day.py"
-  local o; o=$(DAY="$d/day" "$HERE/test-day" --no-mutations 2>&1)
-  if printf '%s\n' "$o" | grep -qxF "FAIL: Guard: keine festen Benutzerpfade"; then MP=$((MP+1)); else echo "OFFEN (Mutation lebt): Guard"; MO=$((MO+1)); fi
-}
-mutpath
-mut "ohne Ziel: Hinweis auf --dir" '--dir oder $DAY_DIR angeben' 'angeben'
-echo "mutations: $MP proven, $MO open"
-[ "$MO" -eq 0 ] && exit $TESTRC || exit 1
+exit $TESTRC

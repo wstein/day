@@ -1,0 +1,3 @@
+# built binary (go build -o day .)
+/day
+/dist/
