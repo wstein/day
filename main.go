@@ -47,15 +47,15 @@ func template(day string) string {
 }
 
 type result struct {
-	rc  int
-	out string
+	rc       int
+	out, err string
 }
 
-// git runs git in cwd. ident (name, email) is passed as -c options. With ok, a failure is returned, not fatal.
+// git runs git in cwd. ident is a list of key=value pairs passed as -c options. With ok, a failure is returned, not fatal.
 func git(cwd string, ident []string, ok bool, args ...string) result {
 	full := []string{}
-	if ident != nil {
-		full = append(full, "-c", "user.name="+ident[0], "-c", "user.email="+ident[1])
+	for _, kv := range ident {
+		full = append(full, "-c", kv)
 	}
 	full = append(full, args...)
 	c := exec.Command("git", full...)
@@ -74,7 +74,7 @@ func git(cwd string, ident []string, ok bool, args ...string) result {
 	if rc != 0 && !ok {
 		panic(die(fmt.Sprintf("git %s: %s", args[0], strings.TrimSpace(se.String()))))
 	}
-	return result{rc, so.String()}
+	return result{rc, so.String(), strings.TrimSpace(se.String())}
 }
 
 func read(path string) string {
@@ -125,7 +125,7 @@ func sections(lines []string) map[string]*[2]int {
 	return out
 }
 
-// identityOpt returns the commit identity from DAY_GIT_NAME/DAY_GIT_EMAIL or the global git config, or nil.
+// identityOpt (legacy repos) returns the commit identity from DAY_GIT_NAME/DAY_GIT_EMAIL or the global git config, or nil.
 func identityOpt() []string {
 	n, e := os.Getenv("DAY_GIT_NAME"), os.Getenv("DAY_GIT_EMAIL")
 	if n == "" {
@@ -137,10 +137,22 @@ func identityOpt() []string {
 	if n == "" || e == "" {
 		return nil
 	}
-	return []string{n, e}
+	return []string{"user.name=" + n, "user.email=" + e}
 }
 
-const legacyHint = "Hinweis: %s hat ein eigenes .git (veraltet). Migration: dayboard/.git wegverschieben, dann im Workspace `git add dayboard/BACKLOG.md dayboard/LOGBOOK.md` und `dayboard/DAYBOARD.md` in .gitignore eintragen."
+// envIdent returns -c pairs only for the DAY_GIT_NAME/DAY_GIT_EMAIL values that are set; git resolves the rest.
+func envIdent() []string {
+	var id []string
+	if n := os.Getenv("DAY_GIT_NAME"); n != "" {
+		id = append(id, "user.name="+n)
+	}
+	if e := os.Getenv("DAY_GIT_EMAIL"); e != "" {
+		id = append(id, "user.email="+e)
+	}
+	return id
+}
+
+const legacyHint = "Hinweis: %s hat ein eigenes .git (veraltet). Migration: dayboard/.git wegverschieben, dann im Workspace `/dayboard/` aus .git/info/exclude und eine Zeile `dayboard/` aus .gitignore entfernen, `git add dayboard/BACKLOG.md dayboard/LOGBOOK.md` ausführen und `dayboard/DAYBOARD.md` in .gitignore eintragen."
 
 // target says where a commit for board dir d goes: legacy (nested repo in d), enclosing repo (cwd = nearest existing
 // ancestor of d, inside a repo), or none.
@@ -165,9 +177,9 @@ func findTarget(d string) target {
 
 func warn(f string, a ...any) { fmt.Fprintf(os.Stderr, "day: Warnung: "+f+"\n", a...) }
 
-// busy reports a rebase or merge in progress in the repo around cwd.
+// busy reports a rebase, merge, cherry-pick, revert or sequencer operation in progress in the repo around cwd.
 func busy(cwd string) string {
-	for _, n := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD"} {
+	for _, n := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer"} {
 		p := strings.TrimSpace(git(cwd, nil, true, "rev-parse", "--path-format=absolute", "--git-path", n).out)
 		if p != "" && exists(p) {
 			return n
@@ -176,8 +188,15 @@ func busy(cwd string) string {
 	return ""
 }
 
+func verb(paths []string) string {
+	if len(paths) > 1 {
+		return "bleiben"
+	}
+	return "bleibt"
+}
+
 // commit commits the given files (relative to d). Legacy: into the nested repo, as before. Enclosing: only these
-// paths (git commit --only), failures only warn. None: nothing.
+// paths (git commit --only), failures only warn and leave the index as it was. None: nothing.
 func commit(t target, d, msg string, paths []string) bool {
 	switch {
 	case t.legacy:
@@ -192,16 +211,30 @@ func commit(t target, d, msg string, paths []string) bool {
 		if len(paths) == 0 {
 			return false
 		}
+		list := strings.Join(paths, ", ")
 		if b := busy(d); b != "" {
-			warn("Repo mitten in %s, kein Commit; %s bleibt geändert", b, strings.Join(paths, ", "))
+			warn("Repo mitten in %s, kein Commit; %s %s geändert", b, list, verb(paths))
 			return false
 		}
+		// Remember whether the index already differed for these paths, so a failure restores it exactly.
+		clean := git(d, nil, true, append([]string{"diff", "--cached", "--quiet", "--"}, paths...)...).rc == 0
 		if r := git(d, nil, true, append([]string{"add", "--"}, paths...)...); r.rc != 0 {
-			warn("git add fehlgeschlagen (ignoriert?), kein Commit; %s bleibt geändert", strings.Join(paths, ", "))
+			detail := r.err
+			for _, p := range paths {
+				if ci := strings.TrimSpace(git(d, nil, true, "check-ignore", "-v", "--", p).out); ci != "" {
+					detail += "\n  ignoriert von: " + ci
+				}
+			}
+			warn("git add fehlgeschlagen, kein Commit; %s %s geändert\n%s", list, verb(paths), detail)
 			return false
 		}
-		if r := git(d, identityOpt(), true, append([]string{"commit", "--only", "-q", "-m", msg, "--"}, paths...)...); r.rc != 0 {
-			warn("Commit fehlgeschlagen; %s bleibt geändert", strings.Join(paths, ", "))
+		if r := git(d, envIdent(), true, append([]string{"commit", "--only", "-q", "-m", msg, "--"}, paths...)...); r.rc != 0 {
+			if clean {
+				if u := git(d, nil, true, append([]string{"reset", "-q", "--"}, paths...)...); u.rc != 0 {
+					git(d, nil, true, append([]string{"rm", "--cached", "-q", "--"}, paths...)...)
+				}
+			}
+			warn("Commit fehlgeschlagen, %s %s geändert (Index zurückgesetzt)\n%s", list, verb(paths), r.err)
 			return false
 		}
 		return true
@@ -249,7 +282,13 @@ func cmdInit(a args) int {
 		}
 		fmt.Printf(legacyHint+"\n", d)
 	} else if t.enclosing && git(t.cwd, nil, true, "check-ignore", "-q", "--", filepath.Join(d, "DAYBOARD.md")).rc == 1 {
-		fmt.Println("Hinweis: dayboard/DAYBOARD.md ist im Repo nicht ignoriert; in .gitignore eintragen (wird nie committet).")
+		rel := "dayboard/DAYBOARD.md"
+		if top := strings.TrimSpace(git(t.cwd, nil, true, "rev-parse", "--show-toplevel").out); top != "" {
+			if r, err := filepath.Rel(realpath(top), filepath.Join(d, "DAYBOARD.md")); err == nil {
+				rel = filepath.ToSlash(r)
+			}
+		}
+		fmt.Printf("Hinweis: %s ist im Repo nicht ignoriert; in .gitignore eintragen (wird nie committet).\n", rel)
 	}
 	if !dry {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -281,10 +320,13 @@ func cmdInit(a args) int {
 		if t.legacy && exists(filepath.Join(d, n)) {
 			paths = append(paths, n)
 		} else if t.enclosing && n != "DAYBOARD.md" {
+			isCreated := false
 			for _, c := range created {
-				if c == n {
-					paths = append(paths, n)
-				}
+				isCreated = isCreated || c == n
+			}
+			// also files left untracked by an earlier failed commit
+			if isCreated || (exists(filepath.Join(d, n)) && git(d, nil, true, "ls-files", "--error-unmatch", "--", n).rc != 0) {
+				paths = append(paths, n)
 			}
 		}
 	}
@@ -363,7 +405,9 @@ func cmdRollover(a args) int {
 		return 0
 	}
 	write(bp, strings.Join(nw, "\n"), false)
-	write(lp, log, false)
+	if t.legacy || len(done) > 0 || exists(lp) {
+		write(lp, log, false)
+	}
 	if t.legacy {
 		fmt.Printf(legacyHint+"\n", d)
 		commit(t, d, "dayboard: "+old, []string{"DAYBOARD.md", "LOGBOOK.md"})
@@ -445,7 +489,12 @@ func cmdCheck(a args) int {
 func mainCheckout() string {
 	if out, err := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir").Output(); err == nil {
 		if cd := strings.TrimSpace(string(out)); filepath.Base(cd) == ".git" {
-			return filepath.Dir(cd)
+			p := filepath.Dir(cd)
+			// only when the parent really is a work tree (not e.g. a bare proj/.git with linked worktrees)
+			if o, err := exec.Command("git", "-C", p, "rev-parse", "--show-toplevel").Output(); err == nil &&
+				realpath(strings.TrimSpace(string(o))) == realpath(p) {
+				return p
+			}
 		}
 	}
 	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {

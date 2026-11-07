@@ -22,7 +22,7 @@ In the whr dev container `whr-up` installs it like the other tools; a failed ins
 
 The dayboard data folder is passed with `--dir` or `$DAY_DIR`. Default: `./dayboard` in the MAIN checkout of the
 current git repository, also when `day` runs inside a linked `git worktree` (the parent of `git rev-parse
---git-common-dir`). Where the common dir is not `<x>/.git` (submodule, separate git dir) it falls back to the work tree
+--git-common-dir`, if that parent is a work tree). Where the common dir is not `<x>/.git` (submodule, separate git dir, bare `proj/.git`) it falls back to the work tree
 top level; otherwise an error, exit 2. `init` creates the folder if it does not exist yet, with `DAYBOARD.md`,
 `LOGBOOK.md` and a `BACKLOG.md` template (existing files are left unchanged; `rollover` and `check` do not touch
 `BACKLOG.md`); `rollover` and `check` need an existing board.
@@ -36,11 +36,13 @@ The dayboard folder is part of the enclosing (workspace) repository, not a repos
   hint when it is not ignored yet. `init` and `rollover` never edit ignore files.
 - `init` commits the files it created, `rollover` commits `LOGBOOK.md` when it appended to it, each with
   `git commit --only -- <paths>`: other staged files stay staged and are not committed. Commit identity:
-  `DAY_GIT_NAME`/`DAY_GIT_EMAIL`, then the global git config, then the repository's own config.
+  `DAY_GIT_NAME` and `DAY_GIT_EMAIL` override name and email independently when set; git resolves whatever is unset (repo config before global).
+  A failed commit unstages exactly the files `day` staged. Files left untracked by an earlier failed commit are committed by the next `init`.
 - Outside any git repository the files are only written, no commit, no error. If the enclosing repo is in the middle of a
   rebase or merge, or the commit fails, `day` warns and leaves the files changed (exit 0 once the board is written).
 - Legacy: a folder that still has its own `.git` keeps working as before (commits, including `DAYBOARD.md`, go into
-  that nested repo) and prints one migration hint. Migrate by hand: move `dayboard/.git` away, then
+  that nested repo) and prints one migration hint. Migrate by hand: move `dayboard/.git` away, remove `/dayboard/` from `.git/info/exclude` (old `day init` wrote it) and a `dayboard/`
+  line from `.gitignore` (old whr-init wrote it), then
   `git add dayboard/BACKLOG.md dayboard/LOGBOOK.md` in the workspace and add `dayboard/DAYBOARD.md` to `.gitignore`.
   There is no automatic migration.
 

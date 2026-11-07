@@ -132,6 +132,7 @@ chk "global Identität: Committer-Mail" eq "$(G "$T/b6" log -1 --format=%ce)" g@
 chk "global Identität: Config nicht geschrieben" eq "$(G "$T/b6" config --local --get user.name | wc -l | tr -d ' ')" 0
 chk "Legacy: Hinweis zur Migration" has "$OUT" "eigenes .git"
 chk "Legacy: Hinweis nennt .gitignore" has "$OUT" "DAYBOARD.md"
+chk "Legacy: Hinweis nennt info/exclude" has "$OUT" "info/exclude"
 chk "Legacy: Commit im verschachtelten Repo inkl. DAYBOARD" has "$(G "$T/b6" ls-files)" "DAYBOARD.md"
 
 # init --dry-run
@@ -206,6 +207,52 @@ chk "Merge läuft: Warnung" has "$OUT" "Warnung"
 chk "Merge läuft: kein Commit" eq "$(head_of "$WB")" "$HB"
 chk "Merge läuft: Logbuch geändert" has "$(cat "$WB/dayboard/LOGBOOK.md")" "- done eins"
 rm -f "$WB/.git/MERGE_HEAD"
+chk "Merge läuft: Index unverändert" eq "$(G "$WB" diff --cached --name-only)" ""
+for BUSY in CHERRY_PICK_HEAD REVERT_HEAD; do
+  cp "$SEED" "$WB/dayboard/DAYBOARD.md"; touch "$WB/.git/$BUSY"; run rollover --dir "$WB/dayboard" --date 2026-11-06
+  chk "$BUSY: Warnung, exit 0" eq "$RC$(has "$OUT" Warnung && echo w)" "0w"
+  chk "$BUSY: Index unverändert" eq "$(G "$WB" diff --cached --name-only)" ""
+  rm -f "$WB/.git/$BUSY"
+done
+cp "$SEED" "$WB/dayboard/DAYBOARD.md"; mkdir "$WB/.git/sequencer"; run rollover --dir "$WB/dayboard" --date 2026-11-07
+chk "sequencer: Warnung" has "$OUT" "Warnung"
+chk "sequencer: Index unverändert" eq "$(G "$WB" diff --cached --name-only)" ""
+rmdir "$WB/.git/sequencer"
+
+# Hook lehnt den Commit ab: Warnung, Index zurückgesetzt; später init holt die untracked Dateien nach
+WH="$T/wsh"; mkws "$WH"; printf '#!/bin/sh\nexit 1\n' > "$WH/.git/hooks/pre-commit"; chmod +x "$WH/.git/hooks/pre-commit"
+run init --dir "$WH/dayboard" --date 2026-11-04
+chk "Hook: exit 0" eq "$RC" 0
+chk "Hook: Warnung" has "$OUT" "Commit fehlgeschlagen"
+chk "Hook: Index leer" eq "$(G "$WH" diff --cached --name-only)" ""
+chk "Hook: Dateien vorhanden, untracked" has "$(G "$WH" status --porcelain)" "?? dayboard/"
+rm "$WH/.git/hooks/pre-commit"
+printf 'x\n' > "$WH/other.txt"; G "$WH" add other.txt
+run init --dir "$WH/dayboard" --date 2026-11-04
+chk "Nachholen: committet BACKLOG/LOGBOOK" eq "$(G "$WH" show --name-only --format= HEAD | tr '\n' ';')" "dayboard/BACKLOG.md;dayboard/LOGBOOK.md;"
+chk "Nachholen: fremde Datei bleibt staged" eq "$(G "$WH" diff --cached --name-only)" "other.txt"
+
+# Ignorierte Zieldatei (altes dayboard/ in .gitignore): Warnung nennt die ignorierende Zeile
+WI="$T/wsi"; mkws "$WI"; printf 'dayboard/\n' > "$WI/.gitignore"; G "$WI" add .gitignore; G "$WI" -c user.name=x -c user.email=x@x commit -q -m ign
+run init --dir "$WI/dayboard" --date 2026-11-04
+chk "ignoriert: exit 0" eq "$RC" 0
+chk "ignoriert: Warnung mit Datei:Zeile" has "$OUT" ".gitignore:1"
+chk "ignoriert: git-Meldung" has "$OUT" "ignored"
+chk "ignoriert: Index leer" eq "$(G "$WI" diff --cached --name-only)" ""
+
+# Identität einzeln: nur DAY_GIT_NAME gesetzt, E-Mail aus der Repo-Config
+WN="$T/wsn"; mkws "$WN"; G "$WN" config user.email repo@example.invalid
+OUT=$(env -u DAY_GIT_EMAIL DAY_GIT_NAME=Nur "$DAY" init --dir "$WN/dayboard" --date 2026-11-04 2>&1); RC=$?
+chk "Identität einzeln: Autor" eq "$(G "$WN" log -1 --format='%an <%ae>')" "Nur <repo@example.invalid>"
+
+# Bare proj/.git mit Worktree: Board im Worktree, nicht neben proj/.git
+git init -q -b main "$T/src"; G "$T/src" -c user.name=x -c user.email=x@x commit -q --allow-empty -m root
+mkdir -p "$T/proj"; git clone -q --bare "$T/src" "$T/proj/.git"
+git --git-dir="$T/proj/.git" worktree add -q -b wk "$T/proj/wk" main
+OUT=$(cd "$T/proj/wk" && "$DAY" init --date 2026-11-04 2>&1); RC=$?
+chk "bare .git: exit 0" eq "$RC" 0
+chk "bare .git: Board im Worktree" test -f "$T/proj/wk/dayboard/DAYBOARD.md"
+chk "bare .git: nichts neben .git" test ! -e "$T/proj/dayboard"
 
 # Legacy: eigenes .git im Board-Ordner (auch innerhalb eines Workspaces) wie bisher, mit Hinweis
 WL="$T/wsl"; mkws "$WL"; mkdir -p "$WL/dayboard"; git init -q -b main "$WL/dayboard"
