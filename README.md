@@ -1,7 +1,7 @@
 # day
 
-Small dayboard tool: `init`, `rollover` and `check` for a dayboard folder (`DAYBOARD.md`, `LOGBOOK.md`, `BACKLOG.md`, own local
-git repository). One static Go binary, standard library only, no Python, no push, no remote. Needs `git` at run time.
+Small dayboard tool: `init`, `rollover` and `check` for a dayboard folder (`DAYBOARD.md`, `LOGBOOK.md`, `BACKLOG.md`). The folder has no
+git repository of its own. One static Go binary, standard library only, no Python, no push, no remote. Needs `git` at run time.
 
 ## Install
 
@@ -20,11 +20,29 @@ In the whr dev container `whr-up` installs it like the other tools; a failed ins
     ./day --help
     DAY_DIR=/path/to/dayboard ./day check
 
-The dayboard data folder is passed with `--dir` or `$DAY_DIR` (default: `./dayboard` in the git top level of the
-current directory; otherwise an error, exit 2). `init` creates `./dayboard` if it does not exist yet, with `DAYBOARD.md`, `LOGBOOK.md` and a `BACKLOG.md` template
-(existing files are left unchanged; `rollover` and `check` do not touch `BACKLOG.md`); `rollover` and
-`check` need an existing board. In a workspace it is `./dayboard`, listed in the workspace `.gitignore`.
-It is not part of this folder and is not tracked here.
+The dayboard data folder is passed with `--dir` or `$DAY_DIR`. Default: `./dayboard` in the MAIN checkout of the
+current git repository, also when `day` runs inside a linked `git worktree` (the parent of `git rev-parse
+--git-common-dir`). Where the common dir is not `<x>/.git` (submodule, separate git dir) it falls back to the work tree
+top level; otherwise an error, exit 2. `init` creates the folder if it does not exist yet, with `DAYBOARD.md`,
+`LOGBOOK.md` and a `BACKLOG.md` template (existing files are left unchanged; `rollover` and `check` do not touch
+`BACKLOG.md`); `rollover` and `check` need an existing board.
+
+## Git model
+
+The dayboard folder is part of the enclosing (workspace) repository, not a repository of its own:
+
+- `dayboard/BACKLOG.md` and `dayboard/LOGBOOK.md` are tracked by the workspace repo. History lives in `LOGBOOK.md`.
+- `dayboard/DAYBOARD.md` is ignored there (`.gitignore` line `dayboard/DAYBOARD.md`) and never committed. `init` prints a
+  hint when it is not ignored yet. `init` and `rollover` never edit ignore files.
+- `init` commits the files it created, `rollover` commits `LOGBOOK.md` when it appended to it, each with
+  `git commit --only -- <paths>`: other staged files stay staged and are not committed. Commit identity:
+  `DAY_GIT_NAME`/`DAY_GIT_EMAIL`, then the global git config, then the repository's own config.
+- Outside any git repository the files are only written, no commit, no error. If the enclosing repo is in the middle of a
+  rebase or merge, or the commit fails, `day` warns and leaves the files changed (exit 0 once the board is written).
+- Legacy: a folder that still has its own `.git` keeps working as before (commits, including `DAYBOARD.md`, go into
+  that nested repo) and prints one migration hint. Migrate by hand: move `dayboard/.git` away, then
+  `git add dayboard/BACKLOG.md dayboard/LOGBOOK.md` in the workspace and add `dayboard/DAYBOARD.md` to `.gitignore`.
+  There is no automatic migration.
 
 ## Tests
 

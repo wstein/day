@@ -117,14 +117,64 @@ func TestInitCreatesDefaultDayboard(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("init rc=%d stderr=%s", rc, se)
 	}
-	for _, f := range []string{"DAYBOARD.md", "LOGBOOK.md", "BACKLOG.md", ".git"} {
+	for _, f := range []string{"DAYBOARD.md", "LOGBOOK.md", "BACKLOG.md"} {
 		if _, err := os.Stat(filepath.Join(top, "dayboard", f)); err != nil {
 			t.Errorf("missing %s: %v", f, err)
 		}
 	}
-	ex, err := os.ReadFile(filepath.Join(top, ".git", "info", "exclude"))
-	if err != nil || !strings.Contains("\n"+string(ex), "\n/dayboard/\n") {
-		t.Fatalf("exclude entry missing: %q %v", ex, err)
+	if _, err := os.Stat(filepath.Join(top, "dayboard", ".git")); err == nil {
+		t.Error("dayboard must not get its own .git")
+	}
+}
+
+func gitOut(t *testing.T, d string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", d, "-c", "user.name=x", "-c", "user.email=x@x"}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestResolveDirFromLinkedWorktree(t *testing.T) {
+	t.Setenv("DAY_DIR", "")
+	top := gitRepo(t)
+	gitOut(t, top, "commit", "-q", "--allow-empty", "-m", "root")
+	wt := filepath.Join(top, "wt")
+	gitOut(t, top, "worktree", "add", "-q", "-b", "b", wt)
+	chdir(t, wt)
+	if got, want := resolveDir("", true), filepath.Join(top, "dayboard"); got != want {
+		t.Fatalf("resolveDir = %q, want %q", got, want)
+	}
+}
+
+func TestInitCommitsOnlyBacklogAndLogbook(t *testing.T) {
+	top := gitRepo(t)
+	gitOut(t, top, "commit", "-q", "--allow-empty", "-m", "root")
+	os.WriteFile(filepath.Join(top, "staged.txt"), []byte("s\n"), 0o644)
+	gitOut(t, top, "add", "staged.txt")
+	if rc, se := runDay(t, top, nil, "init", "--date", "2026-11-04"); rc != 0 {
+		t.Fatalf("rc=%d %s", rc, se)
+	}
+	if got := gitOut(t, top, "show", "--name-only", "--format=", "HEAD"); got != "dayboard/BACKLOG.md\ndayboard/LOGBOOK.md" {
+		t.Fatalf("commit files = %q", got)
+	}
+	if got := gitOut(t, top, "status", "--porcelain"); !strings.Contains(got, "A  staged.txt") || !strings.Contains(got, "?? dayboard/DAYBOARD.md") {
+		t.Fatalf("status = %q", got)
+	}
+}
+
+func TestInitOutsideRepoWithDirJustWrites(t *testing.T) {
+	d := t.TempDir()
+	rc, se := runDay(t, d, []string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(d)}, "init", "--dir", filepath.Join(d, "b"))
+	if rc != 0 || se != "" {
+		t.Fatalf("rc=%d stderr=%s", rc, se)
+	}
+	if _, err := os.Stat(filepath.Join(d, "b", ".git")); err == nil {
+		t.Fatal("no .git expected")
+	}
+	if _, err := os.Stat(filepath.Join(d, "b", "BACKLOG.md")); err != nil {
+		t.Fatal(err)
 	}
 }
 

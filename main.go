@@ -1,4 +1,11 @@
 // day: dayboard tool (init, rollover, check). Standard library only, no push, no remote.
+//
+// Model: the board folder (default ./dayboard in the MAIN checkout of the enclosing repo, also when run from a linked
+// worktree) has no git repo of its own. BACKLOG.md and LOGBOOK.md are tracked by the enclosing (workspace) repo;
+// DAYBOARD.md is ignored there and never committed. init/rollover commit only the files they changed among
+// BACKLOG.md and LOGBOOK.md (git commit --only, so other staged files stay staged and uncommitted). Outside any repo
+// the files are just written. A folder that still has its own .git (legacy) keeps committing into that nested repo
+// and prints a migration hint.
 package main
 
 import (
@@ -70,20 +77,6 @@ func git(cwd string, ident []string, ok bool, args ...string) result {
 	return result{rc, so.String()}
 }
 
-func identity() []string {
-	n, e := os.Getenv("DAY_GIT_NAME"), os.Getenv("DAY_GIT_EMAIL")
-	if n == "" {
-		n = strings.TrimSpace(git(".", nil, true, "config", "--global", "--get", "user.name").out)
-	}
-	if e == "" {
-		e = strings.TrimSpace(git(".", nil, true, "config", "--global", "--get", "user.email").out)
-	}
-	if n == "" || e == "" {
-		panic(die("Git-Identität fehlt: DAY_GIT_NAME/DAY_GIT_EMAIL setzen oder global user.name/user.email konfigurieren"))
-	}
-	return []string{n, e}
-}
-
 func read(path string) string {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -132,9 +125,88 @@ func sections(lines []string) map[string]*[2]int {
 	return out
 }
 
-func commit(d, msg string, paths []string, ident []string) {
-	git(d, nil, false, append([]string{"add", "--"}, paths...)...)
-	git(d, ident, false, append([]string{"commit", "-q", "-m", msg, "--"}, paths...)...)
+// identityOpt returns the commit identity from DAY_GIT_NAME/DAY_GIT_EMAIL or the global git config, or nil.
+func identityOpt() []string {
+	n, e := os.Getenv("DAY_GIT_NAME"), os.Getenv("DAY_GIT_EMAIL")
+	if n == "" {
+		n = strings.TrimSpace(git(".", nil, true, "config", "--global", "--get", "user.name").out)
+	}
+	if e == "" {
+		e = strings.TrimSpace(git(".", nil, true, "config", "--global", "--get", "user.email").out)
+	}
+	if n == "" || e == "" {
+		return nil
+	}
+	return []string{n, e}
+}
+
+const legacyHint = "Hinweis: %s hat ein eigenes .git (veraltet). Migration: dayboard/.git wegverschieben, dann im Workspace `git add dayboard/BACKLOG.md dayboard/LOGBOOK.md` und `dayboard/DAYBOARD.md` in .gitignore eintragen."
+
+// target says where a commit for board dir d goes: legacy (nested repo in d), enclosing repo (cwd = nearest existing
+// ancestor of d, inside a repo), or none.
+type target struct {
+	legacy, enclosing bool
+	cwd               string
+}
+
+func findTarget(d string) target {
+	if exists(filepath.Join(d, ".git")) {
+		return target{legacy: true, cwd: d}
+	}
+	anc := d
+	for !isDir(anc) {
+		anc = filepath.Dir(anc)
+	}
+	if top := git(anc, nil, true, "rev-parse", "--show-toplevel"); top.rc == 0 && strings.TrimSpace(top.out) != "" {
+		return target{enclosing: true, cwd: anc}
+	}
+	return target{}
+}
+
+func warn(f string, a ...any) { fmt.Fprintf(os.Stderr, "day: Warnung: "+f+"\n", a...) }
+
+// busy reports a rebase or merge in progress in the repo around cwd.
+func busy(cwd string) string {
+	for _, n := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD"} {
+		p := strings.TrimSpace(git(cwd, nil, true, "rev-parse", "--path-format=absolute", "--git-path", n).out)
+		if p != "" && exists(p) {
+			return n
+		}
+	}
+	return ""
+}
+
+// commit commits the given files (relative to d). Legacy: into the nested repo, as before. Enclosing: only these
+// paths (git commit --only), failures only warn. None: nothing.
+func commit(t target, d, msg string, paths []string) bool {
+	switch {
+	case t.legacy:
+		ident := identityOpt()
+		if ident == nil {
+			panic(die("Git-Identität fehlt: DAY_GIT_NAME/DAY_GIT_EMAIL setzen oder global user.name/user.email konfigurieren"))
+		}
+		git(d, nil, false, append([]string{"add", "--"}, paths...)...)
+		git(d, ident, false, append([]string{"commit", "-q", "-m", msg, "--"}, paths...)...)
+		return true
+	case t.enclosing:
+		if len(paths) == 0 {
+			return false
+		}
+		if b := busy(d); b != "" {
+			warn("Repo mitten in %s, kein Commit; %s bleibt geändert", b, strings.Join(paths, ", "))
+			return false
+		}
+		if r := git(d, nil, true, append([]string{"add", "--"}, paths...)...); r.rc != 0 {
+			warn("git add fehlgeschlagen (ignoriert?), kein Commit; %s bleibt geändert", strings.Join(paths, ", "))
+			return false
+		}
+		if r := git(d, identityOpt(), true, append([]string{"commit", "--only", "-q", "-m", msg, "--"}, paths...)...); r.rc != 0 {
+			warn("Commit fehlgeschlagen; %s bleibt geändert", strings.Join(paths, ", "))
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // realpath resolves symlinks of the longest existing prefix, like Python's os.path.realpath.
@@ -166,61 +238,23 @@ func cmdInit(a args) int {
 	if dry {
 		pre = "dry-run: "
 	}
-	var ident []string
-	if !dry {
-		ident = identity()
-	}
 	seed, haveSeed := "", a.seed != ""
 	if haveSeed {
 		seed = read(a.seed)
 	}
-	anc := filepath.Dir(d)
-	for !isDir(anc) {
-		anc = filepath.Dir(anc)
+	t := findTarget(d)
+	if t.legacy {
+		if identityOpt() == nil && !dry {
+			panic(die("Git-Identität fehlt: DAY_GIT_NAME/DAY_GIT_EMAIL setzen oder global user.name/user.email konfigurieren"))
+		}
+		fmt.Printf(legacyHint+"\n", d)
+	} else if t.enclosing && git(t.cwd, nil, true, "check-ignore", "-q", "--", filepath.Join(d, "DAYBOARD.md")).rc == 1 {
+		fmt.Println("Hinweis: dayboard/DAYBOARD.md ist im Repo nicht ignoriert; in .gitignore eintragen (wird nie committet).")
 	}
-	if top := git(anc, nil, true, "rev-parse", "--show-toplevel"); top.rc == 0 && strings.TrimSpace(top.out) != "" {
-		t := strings.TrimSpace(top.out)
-		rel, _ := filepath.Rel(realpath(t), d)
-		line := "/" + filepath.ToSlash(rel) + "/"
-		ex := strings.TrimSpace(git(t, nil, false, "rev-parse", "--git-path", "info/exclude").out)
-		if !filepath.IsAbs(ex) {
-			ex = filepath.Join(t, ex)
-		}
-		cur := ""
-		if exists(ex) {
-			cur = read(ex)
-		}
-		found := false
-		for _, l := range strings.Split(cur, "\n") {
-			if l == line {
-				found = true
-			}
-		}
-		if found {
-			fmt.Printf("exclude: %s schon in %s\n", line, ex)
-		} else {
-			fmt.Printf("%sexclude: %s in %s eingetragen (innerhalb des Repos %s)\n", pre, line, ex, t)
-			if !dry {
-				os.MkdirAll(filepath.Dir(ex), 0o755)
-				nl := ""
-				if cur != "" && !strings.HasSuffix(cur, "\n") {
-					nl = "\n"
-				}
-				write(ex, nl+line+"\n", true)
-			}
-		}
-	}
-	isNew := !exists(filepath.Join(d, ".git"))
 	if !dry {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			panic(die("nicht schreibbar: " + err.Error()))
 		}
-		if isNew {
-			git(d, nil, false, "init", "-q", "-b", "main")
-		}
-	}
-	if isNew {
-		fmt.Printf("%sRepo angelegt: %s (lokal, ohne Remote)\n", pre, d)
 	}
 	board := template(a.date)
 	if haveSeed {
@@ -241,18 +275,30 @@ func cmdInit(a args) int {
 			write(p, texts[i], false)
 		}
 	}
-	if dry {
-		if len(created) > 0 || isNew {
-			fmt.Println("dry-run: Commit 'dayboard: init'")
-		}
-	} else if len(created) > 0 || git(d, nil, true, "rev-parse", "--verify", "-q", "HEAD").rc != 0 {
-		var paths []string
-		for _, n := range names {
-			if exists(filepath.Join(d, n)) {
-				paths = append(paths, n)
+	// Commit set: enclosing repo only BACKLOG/LOGBOOK that were created; legacy all existing files, as before.
+	var paths []string
+	for _, n := range names {
+		if t.legacy && exists(filepath.Join(d, n)) {
+			paths = append(paths, n)
+		} else if t.enclosing && n != "DAYBOARD.md" {
+			for _, c := range created {
+				if c == n {
+					paths = append(paths, n)
+				}
 			}
 		}
-		commit(d, "dayboard: init", paths, ident)
+	}
+	legacyNeeds := t.legacy && (len(created) > 0 || dry || git(d, nil, true, "rev-parse", "--verify", "-q", "HEAD").rc != 0)
+	if dry {
+		if (t.enclosing && len(paths) > 0) || (legacyNeeds && len(created) > 0) {
+			fmt.Println("dry-run: Commit 'dayboard: init'")
+		}
+		return 0
+	}
+	if t.legacy && !legacyNeeds {
+		return 0
+	}
+	if commit(t, d, "dayboard: init", paths) {
 		fmt.Println("Commit: dayboard: init")
 	}
 	return 0
@@ -271,12 +317,9 @@ func cmdRollover(a args) int {
 		fmt.Println("nothing to roll over")
 		return 0
 	}
-	if !exists(filepath.Join(d, ".git")) {
-		panic(die("kein Dayboard-Repo: " + d))
-	}
-	var ident []string
-	if !a.dry {
-		ident = identity()
+	t := findTarget(d)
+	if t.legacy && !a.dry && identityOpt() == nil {
+		panic(die("Git-Identität fehlt: DAY_GIT_NAME/DAY_GIT_EMAIL setzen oder global user.name/user.email konfigurieren"))
 	}
 	secMap := sections(lines)
 	se, have := secMap["Erledigt heute"]
@@ -312,13 +355,21 @@ func cmdRollover(a args) int {
 		log += fmt.Sprintf("%s## %s\n%s\n", sep, old, strings.Join(done, "\n"))
 	}
 	if a.dry {
-		fmt.Printf("dry-run: %d Zeilen unter '## %s' an LOGBOOK.md, Kopfzeile -> %s, Commit 'dayboard: %s'\n",
-			len(done), old, a.date, old)
+		c := ""
+		if t.legacy || (t.enclosing && len(done) > 0) {
+			c = fmt.Sprintf(", Commit 'dayboard: %s'", old)
+		}
+		fmt.Printf("dry-run: %d Zeilen unter '## %s' an LOGBOOK.md, Kopfzeile -> %s%s\n", len(done), old, a.date, c)
 		return 0
 	}
 	write(bp, strings.Join(nw, "\n"), false)
 	write(lp, log, false)
-	commit(d, "dayboard: "+old, []string{"DAYBOARD.md", "LOGBOOK.md"}, ident)
+	if t.legacy {
+		fmt.Printf(legacyHint+"\n", d)
+		commit(t, d, "dayboard: "+old, []string{"DAYBOARD.md", "LOGBOOK.md"})
+	} else if len(done) > 0 {
+		commit(t, d, "dayboard: "+old, []string{"LOGBOOK.md"})
+	}
 	fmt.Printf("rolled over %s: %d Zeilen ins Logbuch, Stand %s\n", old, len(done), a.date)
 	return 0
 }
@@ -388,7 +439,22 @@ func cmdCheck(a args) int {
 	return 0
 }
 
-// resolveDir: --dir, then $DAY_DIR, then ./dayboard in the git top level of the current directory; no fixed path.
+// mainCheckout returns the main checkout of the repo around the current directory: the parent of the git common dir
+// when that is a ".git" directory (so also from inside a linked worktree). Otherwise (submodule, separate git dir,
+// bare) it falls back to --show-toplevel; empty when not in a work tree.
+func mainCheckout() string {
+	if out, err := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir").Output(); err == nil {
+		if cd := strings.TrimSpace(string(out)); filepath.Base(cd) == ".git" {
+			return filepath.Dir(cd)
+		}
+	}
+	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	return ""
+}
+
+// resolveDir: --dir, then $DAY_DIR, then ./dayboard in the main checkout of the current repo; no fixed path.
 // The git default must already exist unless the board is to be created (init).
 func resolveDir(given string, create bool) string {
 	d := given
@@ -396,18 +462,15 @@ func resolveDir(given string, create bool) string {
 		d = os.Getenv("DAY_DIR")
 	}
 	if d == "" {
-		c := exec.Command("git", "rev-parse", "--show-toplevel")
-		if out, err := c.Output(); err == nil {
-			if top := strings.TrimSpace(string(out)); top != "" && (create || isDir(filepath.Join(top, "dayboard"))) {
-				d = filepath.Join(top, "dayboard")
-			}
+		if top := mainCheckout(); top != "" && (create || isDir(filepath.Join(top, "dayboard"))) {
+			d = filepath.Join(top, "dayboard")
 		}
 	}
 	if d == "" {
 		if create {
-			fmt.Fprintln(os.Stderr, "day: kein Dayboard-Verzeichnis: --dir oder $DAY_DIR angeben (oder in einem Git-Repository ausführen, dann wird ./dayboard im Git-Toplevel angelegt)")
+			fmt.Fprintln(os.Stderr, "day: kein Dayboard-Verzeichnis: --dir oder $DAY_DIR angeben (oder in einem Git-Repository ausführen, dann wird ./dayboard im Haupt-Checkout des Git-Repos angelegt)")
 		} else {
-			fmt.Fprintln(os.Stderr, "day: kein Dayboard-Verzeichnis: --dir oder $DAY_DIR angeben (oder ./dayboard im Git-Toplevel)")
+			fmt.Fprintln(os.Stderr, "day: kein Dayboard-Verzeichnis: --dir oder $DAY_DIR angeben (oder ./dayboard im Haupt-Checkout des Git-Repos)")
 		}
 		os.Exit(2)
 	}
@@ -421,11 +484,11 @@ func resolveDir(given string, create bool) string {
 
 const usage = `usage: day [-h] {init,rollover,check} ...
 
-  init       Verzeichnis, Repo, DAYBOARD/LOGBOOK/BACKLOG.md anlegen [--dir D] [--date JJJJ-MM-TT] [--seed FILE] [--dry-run]
+  init       Verzeichnis, DAYBOARD/LOGBOOK/BACKLOG.md anlegen [--dir D] [--date JJJJ-MM-TT] [--seed FILE] [--dry-run]
   rollover   Tageswechsel ins Logbuch             [--dir D] [--date JJJJ-MM-TT] [--dry-run]
   check      Verstöße melden (Exit 1 bei Funden)  [--dir D] [--date JJJJ-MM-TT]
 
---dir: Dayboard-Verzeichnis (Default $DAY_DIR, sonst ./dayboard im Git-Toplevel; init legt es an)
+--dir: Dayboard-Verzeichnis (Default $DAY_DIR, sonst ./dayboard im Haupt-Checkout des Git-Repos; init legt es an)
 --date: Datum JJJJ-MM-TT (Default heute, zum Testen)
 `
 

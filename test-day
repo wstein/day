@@ -6,10 +6,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 DAY=${DAY:-$HERE/day}
 BASE=${TMPDIR:-/tmp}
 T=$(mktemp -d "$BASE/daytest.XXXXXX") || exit 1
+T=$(cd "$T" && pwd -P)
 trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/home"
 export HOME="$T/home" GIT_CONFIG_NOSYSTEM=1 DAY_GIT_NAME=Tester DAY_GIT_EMAIL=t@example.invalid
 unset DAY_DIR GIT_DIR GIT_WORK_TREE
+export GIT_CEILING_DIRECTORIES="$T"   # a TMPDIR inside a real repo must never be picked up
 PASS=0; FAILN=0
 chk() { local l=$1; shift; if "$@"; then PASS=$((PASS+1)); else FAILN=$((FAILN+1)); echo "FAIL: $l"; fi; }
 eq() { [ "$1" = "$2" ]; }
@@ -20,6 +22,10 @@ head_of() { G "$1" rev-parse HEAD 2>/dev/null; }
 sum() { cksum < "$1"; }
 
 ents() { local i=1; while [ "$i" -le "$1" ]; do printf -- '- e%s\n' "$i"; i=$((i+1)); done; }
+mkws() { # dir: workspace repo with a root commit that already ignores dayboard/DAYBOARD.md
+  git init -q -b main "$1"; printf 'dayboard/DAYBOARD.md\n' > "$1/.gitignore"
+  G "$1" add .gitignore; G "$1" -c user.name=x -c user.email=x@x commit -q -m root
+}
 mkboard() { # dir date nJetzt nHeute nWartet
   mkdir -p "$1"
   { printf '# Dayboard (Stand %s)\n\n## Jetzt\n' "$2"; ents "$3"; printf '\n## Heute\n'; ents "$4"
@@ -36,24 +42,26 @@ EMPTY="$T/empty.md"
 sed '/^- done/d' "$SEED" > "$EMPTY"
 
 # --- init ---
-B1="$T/b1"
+WS="$T/ws"; mkws "$WS"; B1="$WS/dayboard"
 run init --dir "$B1" --date 2026-11-04
 chk "init: exit 0" eq "$RC" 0
-chk "init: git-Repo" test -d "$B1/.git"
+chk "init: kein eigenes .git" test ! -e "$B1/.git"
 chk "init: DAYBOARD.md Kopfzeile" eq "$(head -1 "$B1/DAYBOARD.md")" "# Dayboard (Stand 2026-11-04)"
 chk "init: 5 Abschnitte" eq "$(grep -c '^## ' "$B1/DAYBOARD.md")" 5
 chk "init: leerer Fakten-Block" eq "$(grep -c 'stw:' "$B1/DAYBOARD.md")" 2
 chk "init: LOGBOOK append-only" grep -q 'append-only' "$B1/LOGBOOK.md"
 chk "init: BACKLOG angelegt" grep -q '^## Next' "$B1/BACKLOG.md"
-chk "init: BACKLOG im Commit" has "$(G "$B1" ls-files)" "BACKLOG.md"
-chk "init: ein Commit" eq "$(G "$B1" rev-list --count HEAD)" 1
+chk "init: BACKLOG im Commit" has "$(G "$WS" ls-files)" "dayboard/BACKLOG.md"
+chk "init: LOGBOOK im Commit" has "$(G "$WS" ls-files)" "dayboard/LOGBOOK.md"
+chk "init: DAYBOARD nicht getrackt" eq "$(G "$WS" ls-files | grep -c DAYBOARD)" 0
+chk "init: ein Commit zusätzlich" eq "$(G "$WS" rev-list --count HEAD)" 2
 chk "init: Commit-Betreff" eq "$(G "$B1" log -1 --format=%s)" "dayboard: init"
 chk "init: Commit ohne Trailer" eq "$(G "$B1" log -1 --format=%B | grep -c .)" 1
 chk "init: Autor und Committer" eq "$(G "$B1" log -1 --format='%an <%ae> | %cn <%ce>')" "Tester <t@example.invalid> | Tester <t@example.invalid>"
-chk "init: Branch main" eq "$(G "$B1" symbolic-ref --short HEAD)" main
-chk "init: kein Remote" eq "$(G "$B1" remote | wc -l | tr -d ' ')" 0
-chk "init: Arbeitsbaum sauber" eq "$(G "$B1" status --porcelain)" ""
-chk "init: Config ohne user" eq "$(G "$B1" config --local --get user.name | wc -l | tr -d ' ')" 0
+chk "init: kein Remote" eq "$(G "$WS" remote | wc -l | tr -d ' ')" 0
+chk "init: Arbeitsbaum sauber (DAYBOARD ignoriert)" eq "$(G "$WS" status --porcelain)" ""
+chk "init: Config ohne user" eq "$(G "$WS" config --local --get user.name | wc -l | tr -d ' ')" 0
+chk "init: kein Legacy-Hinweis" eq "$(printf '%s' "$OUT" | grep -c 'eigenes .git')" 0
 
 H1=$(head_of "$B1"); S1=$(sum "$B1/DAYBOARD.md"); L1=$(sum "$B1/LOGBOOK.md"); BL1=$(sum "$B1/BACKLOG.md")
 run init --dir "$B1" --date 2026-11-09
@@ -68,7 +76,7 @@ B2="$T/b2"
 run init --dir "$B2" --seed "$SEED"
 chk "seed: exit 0" eq "$RC" 0
 chk "seed: Datei übernommen" cmp -s "$SEED" "$B2/DAYBOARD.md"
-chk "seed: committet" eq "$(G "$B2" rev-list --count HEAD)" 1
+chk "seed: kein Repo, kein Commit" test ! -e "$B2/.git"
 run init --dir "$T/b2x" --seed "$T/nichtda.md"
 chk "seed fehlt: exit 2" eq "$RC" 2
 
@@ -79,57 +87,69 @@ chk "bestehend: nicht überschrieben" eq "$(cat "$B3/DAYBOARD.md")" meins
 chk "bestehend: gemeldet" has "$OUT" "DAYBOARD.md: vorhanden"
 chk "bestehend: LOGBOOK angelegt" test -f "$B3/LOGBOOK.md"
 
-# innerhalb eines anderen Repos
+# innerhalb eines anderen Repos, DAYBOARD.md nicht ignoriert: Hinweis, keine Exclude-Änderung
 R="$T/outer"; git init -q -b main "$R"; git -C "$R" -c user.name=x -c user.email=x@x commit -q --allow-empty -m root
 rm -f "$R/.git/info/exclude"
 CFG=$(sum "$R/.git/config")
 run init --dir "$R/sub/board" --date 2026-11-04
 chk "outer: exit 0" eq "$RC" 0
-chk "outer: Eintrag in info/exclude" eq "$(grep -cx '/sub/board/' "$R/.git/info/exclude")" 1
-chk "outer: Hinweis" has "$OUT" "exclude"
-chk "outer: eigenes Repo" test -d "$R/sub/board/.git"
-chk "outer: Board unsichtbar" eq "$(G "$R" status --porcelain)" ""
-run init --dir "$R/sub/board" --date 2026-11-04
-chk "outer2: Eintrag nur einmal" eq "$(grep -cx '/sub/board/' "$R/.git/info/exclude")" 1
-chk "outer: keine .gitignore" test ! -e "$R/.gitignore"
+chk "outer: kein Exclude-Eintrag" test ! -e "$R/.git/info/exclude"
+chk "outer: Hinweis auf .gitignore" has "$OUT" ".gitignore"
+chk "outer: kein eigenes Repo" test ! -e "$R/sub/board/.git"
+chk "outer: nur BACKLOG und LOGBOOK im Commit" eq "$(G "$R" show --name-only --format= HEAD | tr '\n' ';')" "sub/board/BACKLOG.md;sub/board/LOGBOOK.md;"
+chk "outer: DAYBOARD bleibt untracked" eq "$(G "$R" status --porcelain)" "?? sub/board/DAYBOARD.md"
 chk "outer: config unberührt" eq "$(sum "$R/.git/config")" "$CFG"
-printf 'foo' > "$R/.git/info/exclude"
 run init --dir "$R/sub/board" --date 2026-11-04
-chk "outer: Datei ohne Zeilenende" eq "$(cat "$R/.git/info/exclude")" "$(printf 'foo\n/sub/board/')"
-W="$T/wt"; git -C "$R" worktree add -q -b wtb "$W"
-run init --dir "$W/board2" --date 2026-11-04
-chk "worktree: exit 0" eq "$RC" 0
-chk "worktree: Eintrag in gemeinsamer Ausschlussdatei" eq "$(grep -cx '/board2/' "$(G "$W" rev-parse --path-format=absolute --git-path info/exclude)")" 1
-chk "worktree: Board unsichtbar" eq "$(G "$W" status --porcelain)" ""
+chk "outer2: nichts mehr zu committen" eq "$(G "$R" rev-list --count HEAD)" 2
 
-# Identität
+# Linked worktree: Default-Board im Haupt-Checkout
+W="$T/wt"; G "$WS" worktree add -q -b wtb "$W"
+mkdir -p "$W/deep"
+OUT=$(cd "$W/deep" && "$DAY" check --date 2026-11-04 2>&1); RC=$?
+chk "worktree: check findet Board im Haupt-Checkout" eq "$RC" 0
+OUT=$(cd "$W/deep" && "$DAY" rollover --date 2026-11-09 2>&1); RC=$?
+chk "worktree: rollover exit 0" eq "$RC" 0
+chk "worktree: Board im Haupt-Checkout aktualisiert" eq "$(head -1 "$WS/dayboard/DAYBOARD.md")" "# Dayboard (Stand 2026-11-09)"
+chk "worktree: kein DAYBOARD.md im Worktree" test ! -e "$W/dayboard/DAYBOARD.md"
+chk "worktree: leeres Erledigt: kein neuer Commit" eq "$(G "$WS" log -1 --format=%s)" "dayboard: init"
+W2="$T/wt2"; R2="$T/ws2"; mkws "$R2"; G "$R2" worktree add -q -b w2 "$W2"
+OUT=$(cd "$W2" && "$DAY" init --date 2026-11-04 2>&1); RC=$?
+chk "worktree init: exit 0" eq "$RC" 0
+chk "worktree init: Board im Haupt-Checkout" test -f "$R2/dayboard/DAYBOARD.md"
+chk "worktree init: nichts im Worktree" test ! -e "$W2/dayboard"
+
+# Identität (nur das Legacy-Repo verlangt sie; ein umgebendes Repo nutzt notfalls seine eigene Config)
+mkdir -p "$T/b6"; git init -q "$T/b6"
 OUT=$(env -u DAY_GIT_NAME -u DAY_GIT_EMAIL "$DAY" init --dir "$T/b6" 2>&1); RC=$?
-chk "ohne Identität: exit 2" eq "$RC" 2
-chk "ohne Identität: Meldung" has "$OUT" "DAY_GIT_NAME"
-chk "ohne Identität: nichts angelegt" test ! -e "$T/b6"
+chk "ohne Identität (Legacy): exit 2" eq "$RC" 2
+chk "ohne Identität (Legacy): Meldung" has "$OUT" "DAY_GIT_NAME"
+chk "ohne Identität (Legacy): nichts angelegt" test ! -e "$T/b6/DAYBOARD.md"
 mkdir -p "$T/home2"; printf '[user]\n\tname = Glob\n\temail = g@example.invalid\n' > "$T/home2/.gitconfig"
 OUT=$(env -u DAY_GIT_NAME -u DAY_GIT_EMAIL HOME="$T/home2" "$DAY" init --dir "$T/b6" 2>&1); RC=$?
 chk "global Identität: exit 0" eq "$RC" 0
 chk "global Identität: Autor" eq "$(G "$T/b6" log -1 --format=%an)" Glob
 chk "global Identität: Committer-Mail" eq "$(G "$T/b6" log -1 --format=%ce)" g@example.invalid
 chk "global Identität: Config nicht geschrieben" eq "$(G "$T/b6" config --local --get user.name | wc -l | tr -d ' ')" 0
+chk "Legacy: Hinweis zur Migration" has "$OUT" "eigenes .git"
+chk "Legacy: Hinweis nennt .gitignore" has "$OUT" "DAYBOARD.md"
+chk "Legacy: Commit im verschachtelten Repo inkl. DAYBOARD" has "$(G "$T/b6" ls-files)" "DAYBOARD.md"
 
 # init --dry-run
 run init --dir "$T/b8" --seed "$SEED" --dry-run
 chk "init dry-run: exit 0" eq "$RC" 0
 chk "init dry-run: nichts angelegt" test ! -e "$T/b8"
 run init --dir "$R/sub/dry" --dry-run
-chk "init dry-run: exclude unberührt" eq "$(grep -c dry "$R/.git/info/exclude")" 0
-chk "init dry-run: Hinweis" has "$OUT" "exclude"
+chk "init dry-run: nichts angelegt (Repo)" test ! -e "$R/sub/dry"
+chk "init dry-run: Hinweis" has "$OUT" ".gitignore"
 chk "init dry-run: BACKLOG gemeldet" has "$OUT" "BACKLOG.md: angelegt"
 
 # --- rollover ---
-run rollover --dir "$B1" --date 2026-11-04
+run rollover --dir "$B1" --date 2026-11-09
 chk "rollover gleicher Tag: exit 0" eq "$RC" 0
 chk "rollover gleicher Tag: Meldung" eq "$OUT" "nothing to roll over"
 chk "rollover gleicher Tag: HEAD gleich" eq "$(head_of "$B1")" "$H1"
 
-B7="$T/b7"; run init --dir "$B7" --seed "$SEED"
+W7="$T/ws7"; mkws "$W7"; B7="$W7/dayboard"; run init --dir "$B7" --seed "$SEED"
 printf '\n## 2026-11-02\n- alt\n' >> "$B7/LOGBOOK.md"; G "$B7" add LOGBOOK.md; G "$B7" -c user.name=x -c user.email=x@x commit -q -m prep
 printf 'x\n' > "$B7/other.txt"; printf 'y\n' > "$B7/staged.txt"; G "$B7" add staged.txt
 cp "$B7/DAYBOARD.md" "$T/old.md"; cp "$B7/LOGBOOK.md" "$T/oldlog.md"
@@ -153,25 +173,52 @@ chk "rollover: Überschrift Erledigt bleibt" grep -qx '## Erledigt heute' "$B7/D
 sed -n '/stw:begin/,/stw:end/p' "$B7/DAYBOARD.md" > "$T/facts.after"
 chk "rollover: Fakten-Block byte-gleich" cmp -s "$T/facts.before" "$T/facts.after"
 chk "rollover: Betreff" eq "$(G "$B7" log -1 --format=%s)" "dayboard: 2026-11-03"
-chk "rollover: genau 2 Dateien" eq "$(G "$B7" show --name-only --format= HEAD | wc -l | tr -d ' ')" 2
-chk "rollover: fremde Datei unberührt" eq "$(G "$B7" status --porcelain | sort | tr '\n' ';')" "?? other.txt;A  staged.txt;"
+chk "rollover: genau 1 Datei (LOGBOOK)" eq "$(G "$B7" show --name-only --format= HEAD | tr '\n' ';')" "dayboard/LOGBOOK.md;"
+chk "rollover: fremde Datei unberührt, Staged bleibt staged" eq "$(G "$B7" status --porcelain | sort | tr '\n' ';')" "?? dayboard/other.txt;A  dayboard/staged.txt;"
+chk "rollover: DAYBOARD nie committet" eq "$(G "$B7" log --all --name-only --format= | grep -c DAYBOARD)" 0
 chk "rollover: Commit ohne Trailer" eq "$(G "$B7" log -1 --format=%B | grep -c .)" 1
 chk "rollover: Autor" eq "$(G "$B7" log -1 --format='%an|%cn')" "Tester|Tester"
 run rollover --dir "$B7" --date 2026-11-05
 chk "rollover danach: nichts mehr" eq "$OUT" "nothing to roll over"
 
-B9="$T/b9"; run init --dir "$B9" --seed "$EMPTY"
+W9="$T/ws9"; mkws "$W9"; B9="$W9/dayboard"; run init --dir "$B9" --seed "$EMPTY"
 cp "$B9/LOGBOOK.md" "$T/log9"; H9=$(head_of "$B9")
 run rollover --dir "$B9" --date 2026-11-05
 chk "rollover leer: exit 0" eq "$RC" 0
 chk "rollover leer: Kopfzeile" eq "$(head -1 "$B9/DAYBOARD.md")" "# Dayboard (Stand 2026-11-05)"
 chk "rollover leer: Logbuch unverändert" cmp -s "$T/log9" "$B9/LOGBOOK.md"
-chk "rollover leer: Commit" eq "$(G "$B9" rev-list --count HEAD)" 2
+chk "rollover leer: kein Commit (nur DAYBOARD geändert)" eq "$(head_of "$B9")" "$H9"
 chk "rollover leer: Rest gleich" cmp -s <(sed 1d "$EMPTY") <(sed 1d "$B9/DAYBOARD.md")
 B10="$T/b10"; mkdir -p "$B10"; cp "$SEED" "$B10/DAYBOARD.md"
 run rollover --dir "$B10" --date 2026-11-05
-chk "rollover ohne Repo: exit 2" eq "$RC" 2
-chk "rollover ohne Repo: nichts geschrieben" cmp -s "$SEED" "$B10/DAYBOARD.md"
+chk "rollover ohne Repo: exit 0" eq "$RC" 0
+chk "rollover ohne Repo: Board geschrieben" eq "$(head -1 "$B10/DAYBOARD.md")" "# Dayboard (Stand 2026-11-05)"
+chk "rollover ohne Repo: Logbuch geschrieben" has "$(cat "$B10/LOGBOOK.md")" "- done eins"
+chk "rollover ohne Repo: kein .git" test ! -e "$B10/.git"
+chk "rollover ohne Repo: keine Warnung" eq "$OUT" "rolled over 2026-11-03: 2 Zeilen ins Logbuch, Stand 2026-11-05"
+
+# Rebase/Merge im umgebenden Repo oder Commit-Fehler: warnen, Dateien bleiben geändert, exit 0
+WB="$T/wsb"; mkws "$WB"; run init --dir "$WB/dayboard" --seed "$SEED"
+touch "$WB/.git/MERGE_HEAD"; HB=$(head_of "$WB")
+run rollover --dir "$WB/dayboard" --date 2026-11-05
+chk "Merge läuft: exit 0" eq "$RC" 0
+chk "Merge läuft: Warnung" has "$OUT" "Warnung"
+chk "Merge läuft: kein Commit" eq "$(head_of "$WB")" "$HB"
+chk "Merge läuft: Logbuch geändert" has "$(cat "$WB/dayboard/LOGBOOK.md")" "- done eins"
+rm -f "$WB/.git/MERGE_HEAD"
+
+# Legacy: eigenes .git im Board-Ordner (auch innerhalb eines Workspaces) wie bisher, mit Hinweis
+WL="$T/wsl"; mkws "$WL"; mkdir -p "$WL/dayboard"; git init -q -b main "$WL/dayboard"
+run init --dir "$WL/dayboard" --seed "$SEED"
+chk "legacy init: exit 0" eq "$RC" 0
+chk "legacy init: Hinweis" has "$OUT" "eigenes .git"
+chk "legacy init: Commit im verschachtelten Repo" eq "$(G "$WL/dayboard" log -1 --format=%s)" "dayboard: init"
+chk "legacy init: Workspace unberührt" eq "$(G "$WL" rev-list --count HEAD)" 1
+run rollover --dir "$WL/dayboard" --date 2026-11-05
+chk "legacy rollover: exit 0" eq "$RC" 0
+chk "legacy rollover: Hinweis genau einmal" eq "$(printf '%s\n' "$OUT" | grep -c 'eigenes .git')" 1
+chk "legacy rollover: Commit im verschachtelten Repo" eq "$(G "$WL/dayboard" log -1 --format=%s)" "dayboard: 2026-11-03"
+chk "legacy rollover: 2 Dateien committet" eq "$(G "$WL/dayboard" show --name-only --format= HEAD | wc -l | tr -d ' ')" 2
 run rollover --dir "$T/gibtsnicht"
 chk "rollover ohne Board: exit 2" eq "$RC" 2
 
@@ -242,8 +289,8 @@ chk "init ohne --dir im Git-Repo: exit 0" eq "$RC" 0
 chk "init ohne --dir: DAYBOARD.md angelegt" test -f "$T/gi/dayboard/DAYBOARD.md"
 chk "init ohne --dir: LOGBOOK.md angelegt" test -f "$T/gi/dayboard/LOGBOOK.md"
 chk "init ohne --dir: BACKLOG.md angelegt" test -f "$T/gi/dayboard/BACKLOG.md"
-chk "init ohne --dir: eigenes Repo" test -d "$T/gi/dayboard/.git"
-chk "init ohne --dir: Exclude-Eintrag" grep -qxF "/dayboard/" "$T/gi/.git/info/exclude"
+chk "init ohne --dir: kein eigenes Repo" test ! -e "$T/gi/dayboard/.git"
+chk "init ohne --dir: Commit im noch leeren Repo" eq "$(G "$T/gi" show --name-only --format= HEAD | tr '\n' ';')" "dayboard/BACKLOG.md;dayboard/LOGBOOK.md;"
 OUT=$(cd "$T/nogit" && GIT_CEILING_DIRECTORIES="$T" "$DAY" init 2>&1); RC=$?
 chk "init ohne Ziel ausserhalb Git: exit 2" eq "$RC" 2
 chk "init ohne Ziel: Hinweis auf --dir" has "$OUT" "--dir"
