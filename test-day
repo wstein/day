@@ -451,9 +451,10 @@ nostand "$BR" > "$T/br.ns1"
 OUT=$("$DAY" briefing "$FX/rust-online.json" --dir "$BR" --date 2026-11-11 --time 16:40 2>&1)
 chk "briefing: nur die Stand-Zeile ändert sich" cmp -s "$T/br.ns1" <(nostand "$BR")
 chk "briefing: neue Stand-Zeile" has "$(cat "$BR/DAYBOARD.md")" "Stand 2026-11-11 16:40,"
-brun --dir "$BR" - < "$FX/rust-online.json"
-chk "briefing -: liest Standardeingabe, gleicher Block" cmp -s "$T/br.ns1" <(nostand "$BR")
+brun --dir "$BR" - < "$FX/rust-offline.json"
 chk "briefing -: exit 0" eq "$RC" 0
+chk "briefing -: liest die Standardeingabe" has "$(cat "$BR/DAYBOARD.md")" "- local-only: PRs n/a"
+chk "briefing -: kein veraltet-Vermerk" eq "$(grep -c veraltet "$BR/DAYBOARD.md")" 0
 
 # Zustände: offline / nicht gelesen / fehlgeschlagen / Untergrenze / ohne Zähler
 B2="$T/br2"; mkboard "$B2" 2026-11-11 0 0 0
