@@ -199,3 +199,62 @@ func TestRolloverWithoutDayboardErrors(t *testing.T) {
 		t.Fatal("dayboard must not be created")
 	}
 }
+
+func TestMask(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		max  int
+		md   bool
+		want string
+	}{
+		{"a\x1b[31m\r\n\tb", 0, true, `a\x1b[31m\r\n\tb`},
+		{"x\u202ey\u2028z", 0, false, `x\u202ey\u2028z`},
+		{"<!-- stw:end -->", 0, true, "&lt;!-- stw:end --&gt;"},
+		{"<a>", 0, false, "<a>"},
+		{"abcdef", 3, true, "abc…"},
+		{"bad\xffutf", 0, true, "bad�utf"},
+	} {
+		if got := mask(c.in, c.max, c.md); got != c.want {
+			t.Errorf("mask(%q,%d,%v) = %q, want %q", c.in, c.max, c.md, got, c.want)
+		}
+	}
+}
+
+func TestSrcText(t *testing.T) {
+	n := func(i int) *int { return &i }
+	for _, c := range []struct {
+		s    *stwSrc
+		want string
+	}{
+		{&stwSrc{State: "ok", Open: n(3), Bot: n(1)}, "PRs 3 (bot 1)"},
+		{&stwSrc{State: "ok", Open: n(100), Bot: n(2), Truncated: true}, "PRs 100+ (bot 2+)"},
+		{&stwSrc{State: "ok"}, "PRs ?"},
+		{&stwSrc{State: "failed"}, "PRs ?"},
+		{&stwSrc{State: "not-read"}, "PRs n/a"},
+		{&stwSrc{State: "no-remote"}, "PRs n/a"},
+		{&stwSrc{State: "other"}, "PRs ?"},
+		{nil, "PRs fehlt"},
+	} {
+		if got := srcText("PRs", c.s, "bot"); got != c.want {
+			t.Errorf("srcText(%+v) = %q, want %q", c.s, got, c.want)
+		}
+	}
+}
+
+func TestParseStwRejectsOtherSchemas(t *testing.T) {
+	good := `{"schema_version":2,"command":"status","repos":[],"summary":{}}`
+	if _, err := parseStw([]byte(good)); err != nil {
+		t.Fatalf("valid document rejected: %v", err)
+	}
+	for in, want := range map[string]string{
+		`{"schema_version":1,"command":"status","repos":[],"summary":{}}`:   "schema_version 1 gelesen, 2 erwartet",
+		`{"schema_version":2.0,"command":"status","repos":[],"summary":{}}`: "schema_version 2.0 gelesen, 2 erwartet",
+		`{"schema_version":"2","command":"status","repos":[],"summary":{}}`: "gelesen, 2 erwartet",
+		`{"command":"status","repos":[],"summary":{}}`:                      "schema_version fehlt",
+		`[]`: "kein gültiges JSON-Objekt",
+	} {
+		if _, err := parseStw([]byte(in)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("parseStw(%s) error = %v, want %q", in, err, want)
+		}
+	}
+}
