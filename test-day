@@ -345,6 +345,33 @@ git init -q "$T/gn"
 OUT=$(cd "$T/gn" && "$DAY" rollover --date 2026-11-04 2>&1); RC=$?
 chk "rollover ohne ./dayboard: exit 2" eq "$RC" 2
 chk "rollover ohne ./dayboard: nichts angelegt" test ! -e "$T/gn/dayboard"
+# --- debt-ledger.md (Schuldenbuch): Prüfung und Anzeige in check ---
+L="$T/ledger"; mkboard "$L" 2026-11-04 0 0 0
+checkrun "$L"
+chk "ledger fehlt: still, exit 0" eq "$RC$OUT" "0"
+printf '# Schuldenbuch\n\n<!-- Kopf\n- 2026-01-01 | kein | Eintrag | im Kommentar -->\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger nur Kopf: still, exit 0" eq "$RC$OUT" "0"
+: > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger leer: still, exit 0" eq "$RC$OUT" "0"
+printf -- '- 2026-11-04 | a.rs:1 | Fix a | rev feat 1234567\n- 2026-11-01 | b.rs:2 | Fix b | rev x abcdef0\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger frisch und 3 Tage alt: Anzahl, keine Liste, exit 0" eq "$RC|$OUT" "0|Schuldenbuch: 2 offen, 0 älter als 3 Tage"
+printf -- '- 2026-11-04 | a.rs:1 | Fix a | rev feat 1234567\n- 2026-10-31 | b.rs:2 | Fix b | rev x abcdef0\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger 4 Tage alt: angezeigt, exit 0" eq "$RC|$OUT" "0|Schuldenbuch: 2 offen, 1 älter als 3 Tage
+  - 2026-10-31 | b.rs:2 | Fix b | rev x abcdef0"
+printf -- '# T\n\n- 2026-11-04 | a.rs:1 | Fix | 1234567\nirgendwas\n- 2026-13-01 | a | b | 1234567\n- 2026-11-04 | a | b | 12345\n- 2026-11-05 | a | b | 1234567\n- 2026-11-04 | a | | 1234567\n- 2026-11-04 | a | b | c | 1234567\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger ungültig: exit 1" eq "$RC" 1
+chk "ledger Freitext: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 4: kein Eintrag"
+chk "ledger Monat 13: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 5: ungültiges Datum 2026-13-01"
+chk "ledger Quelle ohne Head: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 6: Quelle ohne 7-stelligen Head"
+chk "ledger Zukunft: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 7: Datum 2026-11-05 liegt nach heute 2026-11-04"
+chk "ledger leeres Feld: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 8: kein Eintrag"
+chk "ledger fünf Felder: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 9: kein Eintrag"
+chk "ledger: gültiger Eintrag zählt" has "$OUT" "Schuldenbuch: 1 offen, 0 älter als 3 Tage"
+printf -- '- 2026-10-01 | a.rs:1 | Fix | 1234567\n' > "$L/debt-ledger.md"
+G_BEFORE=$(sum "$L/DAYBOARD.md")
+chk "ledger zählt nicht in Backlog-Grenzen (Jetzt 0)" eq "$(checkrun "$L"; printf '%s' "$RC")" 0
+chk "ledger ändert DAYBOARD.md nicht" eq "$(sum "$L/DAYBOARD.md")" "$G_BEFORE"
+
 # Guard: kein maschinengebundener Pfad in den Skripten
 GUARD_DIR=$(cd "$(dirname "$DAY")" && pwd)
 chk "Guard: keine festen Benutzerpfade" test -z "$(grep -rnE --include='*.go' --include=README.md '/Use''rs/|Work''spaces|go-scr''ipts|\.claude/jo''bs' "$GUARD_DIR" 2>/dev/null)"

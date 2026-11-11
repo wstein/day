@@ -418,6 +418,68 @@ func cmdRollover(a args) int {
 	return 0
 }
 
+const (
+	ledgerFile = "debt-ledger.md"
+	ledgerDays = 3
+)
+
+var (
+	ledgerRe = regexp.MustCompile(`^- (\d{4}-\d{2}-\d{2}) \| ([^|]*[^| ]) \| ([^|]*[^| ]) \| ([^|]*[^| ])$`)
+	hex7Re   = regexp.MustCompile(`(^|[^0-9A-Za-z])[0-9a-f]{7}($|[^0-9A-Za-z])`)
+)
+
+// checkLedger validates dir/debt-ledger.md (a missing file is fine). Allowed lines: blank, "#" headings, an HTML
+// comment block, and entries "- JJJJ-MM-TT | Datei:Zeile | Fix | Quelle" (the source holds a 7-char head). It returns
+// the findings (with line numbers), the number of open entries and the entries older than ledgerDays days.
+func checkLedger(dir, today string) (findings []string, open int, old []string) {
+	b, err := os.ReadFile(filepath.Join(dir, ledgerFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		return []string{ledgerFile + ": nicht lesbar: " + err.Error()}, 0, nil
+	}
+	now, _ := time.Parse("2006-01-02", today)
+	inComment := false
+	for i, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimRight(l, "\r")
+		bad := func(why string) {
+			findings = append(findings, fmt.Sprintf("%s: Zeile %d: %s", ledgerFile, i+1, why))
+		}
+		t := strings.TrimSpace(l)
+		if inComment {
+			inComment = !strings.Contains(t, "-->")
+			continue
+		}
+		switch {
+		case t == "" || strings.HasPrefix(t, "#"):
+		case strings.HasPrefix(t, "<!--"):
+			inComment = !strings.Contains(t, "-->")
+		default:
+			m := ledgerRe.FindStringSubmatch(l)
+			if m == nil {
+				bad("kein Eintrag `- JJJJ-MM-TT | Datei:Zeile | Fix | Quelle`")
+				continue
+			}
+			d, err := time.Parse("2006-01-02", m[1])
+			switch {
+			case err != nil:
+				bad("ungültiges Datum " + m[1])
+			case !hex7Re.MatchString(m[4]):
+				bad("Quelle ohne 7-stelligen Head")
+			case d.After(now):
+				bad("Datum " + m[1] + " liegt nach heute " + today)
+			default:
+				open++
+				if int(now.Sub(d).Hours()/24) > ledgerDays {
+					old = append(old, l)
+				}
+			}
+		}
+	}
+	return
+}
+
 func cmdCheck(a args) int {
 	lines := strings.Split(read(filepath.Join(a.dir, "DAYBOARD.md")), "\n")
 	var f []string
@@ -474,8 +536,17 @@ func cmdCheck(a args) int {
 	case len(b) > 1 || len(en) > 1 || b[0] > en[0]:
 		f = append(f, "Fakten-Block: Markierungen doppelt oder in falscher Reihenfolge")
 	}
+	lf, open, old := checkLedger(a.dir, a.date)
+	f = append(f, lf...)
 	for _, x := range f {
 		fmt.Println(x)
+	}
+	// Display only, never a finding: the ledger does not change the exit code (except for invalid lines above).
+	if open > 0 {
+		fmt.Printf("Schuldenbuch: %d offen, %d älter als %d Tage\n", open, len(old), ledgerDays)
+		for _, l := range old {
+			fmt.Println("  " + l)
+		}
 	}
 	if len(f) > 0 {
 		return 1
@@ -536,6 +607,7 @@ const usage = `usage: day [-h] {init,rollover,check} ...
   init       Verzeichnis, DAYBOARD/LOGBOOK/BACKLOG.md anlegen [--dir D] [--date JJJJ-MM-TT] [--seed FILE] [--dry-run]
   rollover   Tageswechsel ins Logbuch             [--dir D] [--date JJJJ-MM-TT] [--dry-run]
   check      Verstöße melden (Exit 1 bei Funden)  [--dir D] [--date JJJJ-MM-TT]
+             prüft auch debt-ledger.md (falls vorhanden) und zeigt Einträge älter als 3 Tage an (nur Anzeige)
 
 --dir: Dayboard-Verzeichnis (Default $DAY_DIR, sonst ./dayboard im Haupt-Checkout des Git-Repos; init legt es an)
 --date: Datum JJJJ-MM-TT (Default heute, zum Testen)
