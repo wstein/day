@@ -1,6 +1,6 @@
 # day
 
-Small dayboard tool: `init`, `rollover` and `check` for a dayboard folder (`DAYBOARD.md`, `LOGBOOK.md`, `BACKLOG.md`). The folder has no
+Small dayboard tool: `init`, `rollover`, `check` and `briefing` for a dayboard folder (`DAYBOARD.md`, `LOGBOOK.md`, `BACKLOG.md`). The folder has no
 git repository of its own. One static Go binary, standard library only, no Python, no push, no remote. Needs `git` at run time.
 
 ## Install
@@ -24,8 +24,8 @@ The dayboard data folder is passed with `--dir` or `$DAY_DIR`. Default: `./daybo
 current git repository, also when `day` runs inside a linked `git worktree` (the parent of `git rev-parse
 --git-common-dir`, if that parent is a work tree). Where the common dir is not `<x>/.git` (submodule, separate git dir, bare `proj/.git`) it falls back to the work tree
 top level; otherwise an error, exit 2. `init` creates the folder if it does not exist yet, with `DAYBOARD.md`,
-`LOGBOOK.md` and a `BACKLOG.md` template (existing files are left unchanged; `rollover` and `check` do not touch
-`BACKLOG.md`); `rollover` and `check` need an existing board.
+`LOGBOOK.md` and a `BACKLOG.md` template (existing files are left unchanged; `rollover`, `check` and `briefing` do not touch
+`BACKLOG.md`); `rollover`, `check` and `briefing` need an existing board.
 
 ## Debt ledger
 
@@ -42,6 +42,35 @@ leading indentation and a UTF-8 BOM are tolerated. Done = delete the line (histo
 without a 7-char hex head (a 40-char hash does not count), comment not closed. Otherwise display only, no gate: with at least one
 valid entry `check` prints `Schuldenbuch: N offen, M älter als 3 Tage` and lists the entries older than 3 days. The file does not count
 toward the section limits. `day` never writes it.
+
+## briefing
+
+`day briefing [FILE|-] [--print] [--offline] [--dir D] [--date YYYY-MM-DD] [--time HH:MM]` collects the facts of `stw status --json`
+into its own block of `DAYBOARD.md` and prints an overview. The planning sections (Jetzt, Heute, Wartet auf Owner, ...) are never
+touched. `stw status` does not know the dayboard; `day` reads the stw JSON with a fixed `schema_version` (only `2` is accepted).
+
+- Input: `FILE` is read as the stw JSON, `-` reads standard input, without an argument `day` runs `stw status --json` itself (`stw` from
+  `PATH`, no shell, 60 s limit, fixed environment: `PATH`, `HOME`, locale, `XDG_*`, proxy, `GH_TOKEN`/`GITHUB_TOKEN`, `SSH_AUTH_SOCK`, `NO_COLOR=1`;
+  `--offline` is passed on). `--offline` with a file is a usage error. stw exit 1 (a repository cannot be read) with a valid document is used.
+- Block: it sits between the lines `<!-- stw:begin -->` and `<!-- stw:end -->` under the heading `## stw-Fakten`; every run replaces only
+  the lines between the markers, atomically (temp file in the same directory, then rename; a symlinked `DAYBOARD.md` is followed, the file mode
+  stays). Without markers the block is appended once. The block does not count toward the section limits (a section ends at the marker).
+  Content: `Stand <date time>, Quelle: stw status --json (schema 2)`, one counts line per repository and `All` (as `stw status` prints them:
+  `n+` is a lower bound, `?` not readable, `n/a` not read; never 0 for a missing read), `Handlungspunkte (N)` (the ten first; Go-engine
+  `actions` by priority, else repositories with an attention reason in JSON order), `Hinweise (N)` and a summary line. Missing fields
+  (for example no `counts`) are shown as `keine Zähler im JSON`. The same run is idempotent: only the Stand line changes.
+- Text from the JSON (names, titles, messages) is untrusted: control characters, ESC, CR/LF and bidi characters are written as `\x1b`,
+  `\n`, `\u202e`, lengths are bounded, `<` and `>` become entities, and every such text sits in a `- ` list line, so it cannot forge a marker
+  or a heading.
+- Output: the plan overview (Jetzt, Heute, Wartet auf Owner in short form), `Schuldenbuch: N offen, M älter als 3 Tage`, then the block.
+  `--print` writes nothing. `--date` and `--time` set the Stand line (default: now).
+- Errors (stw missing, fails, over the limit, unknown `schema_version`, broken JSON, missing required fields `command`, `repos`, `summary`,
+  `repos[].name`): the line `stw status nicht verfügbar: <reason>` is printed, the old block stays, its Stand line gets
+  `; veraltet seit <time>: <reason>` once, exit 0. Exit 2 only for usage errors, an unreadable input file, an unreadable or unwritable
+  dayboard directory and a damaged marker structure (one marker, repeated or swapped markers: reported with line numbers, nothing written).
+- `check` requires exactly one `<!-- stw:begin -->` before exactly one `<!-- stw:end -->` (findings with line numbers). `rollover` leaves the
+  block as it is: it is neither moved to the logbook nor deleted.
+- `$DAY_STW_TIMEOUT_SEC` shortens the stw limit (for tests).
 
 ## Git model
 
@@ -68,6 +97,7 @@ The dayboard folder is part of the enclosing (workspace) repository, not a repos
     go test ./...                       # a few unit tests
 
 The shell tests use throw-away directories under `${TMPDIR:-/tmp}` and a private `$HOME`; they need no real dayboard.
+The stw JSON fixtures are in `testdata/stw/` (Rust `stw status --json` shape written from `src/status.rs`, Go schema 2 and schema 1 from the schema files; not captured from a live run).
 This is a prototype tool: there are no mutation proofs.
 
 ## Release
