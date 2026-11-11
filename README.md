@@ -49,16 +49,26 @@ toward the section limits. `day` never writes it.
 into its own block of `DAYBOARD.md` and prints an overview. The planning sections (Jetzt, Heute, Wartet auf Owner, ...) are never
 touched. `stw status` does not know the dayboard; `day` reads the stw JSON with a fixed `schema_version` (only `2` is accepted).
 
-- Input: `FILE` is read as the stw JSON, `-` reads standard input, without an argument `day` runs `stw status --json` itself (`stw` from
-  `PATH`, no shell, 60 s limit, fixed environment: `PATH`, `HOME`, locale, `XDG_*`, proxy, `GH_TOKEN`/`GITHUB_TOKEN`, `SSH_AUTH_SOCK`, `NO_COLOR=1`;
-  `--offline` is passed on). `--offline` with a file is a usage error. stw exit 1 (a repository cannot be read) with a valid document is used.
+- Input: `FILE` is read as the stw JSON, `-` reads standard input, without an argument `day` runs `stw status --json` itself: `stw` from
+  `PATH`, no shell, 60 s limit (the whole process group is killed), working directory = the parent of the dayboard directory (the workspace;
+  keep the board at `<workspace>/dayboard`, `--dir` or `$DAY_DIR` elsewhere runs stw in the parent of that folder), fixed environment: `PATH`, `HOME`,
+  `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `GH_TOKEN`, `GITHUB_TOKEN`,
+  `GH_CONFIG_DIR`, `SSH_AUTH_SOCK`, proxy variables, `NO_COLOR=1`. Output is limited to 16 MiB, stderr beyond 64 KiB is dropped.
+  `--offline` is passed on; with a file it is a usage error. The Go stw prints schema 1 with `--offline`, so `day briefing --offline` with
+  the Go stw reports `Go-stw liefert offline schema 1; ohne --offline aufrufen`. stw exit 1 (a repository cannot be read) with a valid document is
+  used; any other non-zero exit is an error.
 - Block: it sits between the lines `<!-- stw:begin -->` and `<!-- stw:end -->` under the heading `## stw-Fakten`; every run replaces only
   the lines between the markers, atomically (temp file in the same directory, then rename; a symlinked `DAYBOARD.md` is followed, the file mode
   stays). Without markers the block is appended once. The block does not count toward the section limits (a section ends at the marker).
   Content: `Stand <date time>, Quelle: stw status --json (schema 2)`, one counts line per repository and `All` (as `stw status` prints them:
-  `n+` is a lower bound, `?` not readable, `n/a` not read; never 0 for a missing read), `Handlungspunkte (N)` (the ten first; Go-engine
-  `actions` by priority, else repositories with an attention reason in JSON order), `Hinweise (N)` and a summary line. Missing fields
-  (for example no `counts`) are shown as `keine Zähler im JSON`. The same run is idempotent: only the Stand line changes.
+  `n+` is a lower bound, `?` not readable, `n/a` not read; never 0 for a missing read), then the list of things to do (ten at most, then
+  `… und N weitere (stw status)`), the notices (ten at most) and a summary line. Two producers use `schema_version` 2 and day marks which one it
+  read: the Go engine has `actions` (with priority) and `notices`: `Handlungspunkte (N)` by priority, `Hinweise (N)`. The Rust stw has neither: `Repos mit
+  Aufmerksamkeit (N)` (repositories with an attention reason in JSON order, at most five reasons each) and `Hinweise (abgeleitet, N)` (derived from
+  `github_note`, the pull request error per repository and issue reads that failed) until it delivers a `notices` array. Missing fields
+  (for example no `counts`, as in the installed Go release) are shown as `keine Zähler im JSON`. The same run is idempotent: only the Stand line changes.
+  The board is read again after the stw run and checked again right before the rename, so an entry the coordinator sets meanwhile is kept; a CRLF
+  board keeps its line endings.
 - Text from the JSON (names, titles, messages) is untrusted: control characters, ESC, CR/LF and bidi characters are written as `\x1b`,
   `\n`, `\u202e`, lengths are bounded, `<` and `>` become entities, and every such text sits in a `- ` list line, so it cannot forge a marker
   or a heading.
@@ -97,7 +107,7 @@ The dayboard folder is part of the enclosing (workspace) repository, not a repos
     go test ./...                       # a few unit tests
 
 The shell tests use throw-away directories under `${TMPDIR:-/tmp}` and a private `$HOME`; they need no real dayboard.
-The stw JSON fixtures are in `testdata/stw/` (Rust `stw status --json` shape written from `src/status.rs`, Go schema 2 and schema 1 from the schema files; not captured from a live run).
+The stw JSON fixtures are in `testdata/stw/` (`real-*.json` are real outputs of the Rust stw, the Go engine, the installed Go release and Go `--offline` (schema 1), paths normalized to `/ws`; the other files are hand-made for failure, attack, truncation and error cases).
 This is a prototype tool: there are no mutation proofs.
 
 ## Release
