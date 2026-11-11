@@ -1,0 +1,1 @@
+{"schema_version": 1, "command": "status", "root": "/ws", "engine": "go", "repos": [{"name": "x", "path": "/ws/x", "attention": false, "reasons": []}], "summary": {"total": 1, "attention": 0}, "next_steps": []}

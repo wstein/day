@@ -262,7 +262,8 @@ func realpath(p string) string {
 
 type args struct {
 	cmd, dir, date, seed string
-	dry                  bool
+	file, time           string // briefing: input file ("-" = stdin, "" = run stw), time of day of the Stand line
+	dry, print, offline  bool
 }
 
 func cmdInit(a args) int {
@@ -643,19 +644,23 @@ func resolveDir(given string, create bool) string {
 	return realpath(d)
 }
 
-const usage = `usage: day [-h] {init,rollover,check} ...
+const usage = `usage: day [-h] {init,rollover,check,briefing} ...
 
   init       Verzeichnis, DAYBOARD/LOGBOOK/BACKLOG.md anlegen [--dir D] [--date JJJJ-MM-TT] [--seed FILE] [--dry-run]
   rollover   Tageswechsel ins Logbuch             [--dir D] [--date JJJJ-MM-TT] [--dry-run]
   check      Verstöße melden (Exit 1 bei Funden)  [--dir D] [--date JJJJ-MM-TT]
              prüft auch debt-ledger.md (falls vorhanden) und zeigt Einträge älter als 3 Tage an (nur Anzeige)
+  briefing   stw-Fakten in den Block zwischen den stw-Markern schreiben und mit dem Plan-Überblick ausgeben
+             day briefing [DATEI|-] [--print] [--offline] [--dir D] [--date JJJJ-MM-TT] [--time HH:MM]
+             DATEI: JSON von "stw status --json" (- = Standardeingabe); ohne Argument ruft day stw selbst auf (--offline wird weitergereicht)
+             --print: nichts schreiben, nur anzeigen
 
 --dir: Dayboard-Verzeichnis (Default $DAY_DIR, sonst ./dayboard im Haupt-Checkout des Git-Repos; init legt es an)
 --date: Datum JJJJ-MM-TT (Default heute, zum Testen)
 `
 
 func argErr(msg string) {
-	fmt.Fprintf(os.Stderr, "usage: day [-h] {init,rollover,check} ...\nday: error: %s\n", msg)
+	fmt.Fprintf(os.Stderr, "usage: day [-h] {init,rollover,check,briefing} ...\nday: error: %s\n", msg)
 	os.Exit(2)
 }
 
@@ -669,8 +674,8 @@ func parse(argv []string) args {
 		os.Exit(0)
 	}
 	a.cmd = argv[0]
-	if a.cmd != "init" && a.cmd != "rollover" && a.cmd != "check" {
-		argErr(fmt.Sprintf("argument cmd: invalid choice: '%s' (choose from 'init', 'rollover', 'check')", a.cmd))
+	if a.cmd != "init" && a.cmd != "rollover" && a.cmd != "check" && a.cmd != "briefing" {
+		argErr(fmt.Sprintf("argument cmd: invalid choice: '%s' (choose from 'init', 'rollover', 'check', 'briefing')", a.cmd))
 	}
 	rest := argv[1:]
 	for i := 0; i < len(rest); i++ {
@@ -703,11 +708,28 @@ func parse(argv []string) args {
 			}
 		case o == "--seed" && a.cmd == "init":
 			a.seed = need()
-		case o == "--dry-run" && a.cmd != "check":
+		case o == "--dry-run" && (a.cmd == "init" || a.cmd == "rollover"):
 			a.dry = true
+		case o == "--print" && a.cmd == "briefing":
+			a.print = true
+		case o == "--offline" && a.cmd == "briefing":
+			a.offline = true
+		case o == "--time" && a.cmd == "briefing":
+			a.time = need()
+			if _, err := time.Parse("15:04", a.time); err != nil {
+				argErr("argument --time: HH:MM erwartet: " + a.time)
+			}
+		case a.cmd == "briefing" && (rest[i] == "-" || !strings.HasPrefix(rest[i], "-")):
+			if a.file != "" {
+				argErr("unrecognized arguments: " + rest[i])
+			}
+			a.file = rest[i]
 		default:
 			argErr("unrecognized arguments: " + rest[i])
 		}
+	}
+	if a.cmd == "briefing" && a.offline && a.file != "" {
+		argErr("--offline gilt nur ohne Eingabedatei (day ruft dann stw status --json --offline auf)")
 	}
 	return a
 }
@@ -716,6 +738,9 @@ func run(argv []string) (rc int) {
 	a := parse(argv)
 	if a.date == "" {
 		a.date = time.Now().Format("2006-01-02")
+	}
+	if a.time == "" {
+		a.time = time.Now().Format("15:04")
 	}
 	a.dir = resolveDir(a.dir, a.cmd == "init")
 	defer func() {
@@ -733,6 +758,8 @@ func run(argv []string) (rc int) {
 		return cmdInit(a)
 	case "rollover":
 		return cmdRollover(a)
+	case "briefing":
+		return cmdBriefing(a)
 	}
 	return cmdCheck(a)
 }
