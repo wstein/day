@@ -30,11 +30,18 @@ top level; otherwise an error, exit 2. `init` creates the folder if it does not 
 ## Debt ledger
 
 `<dir>/debt-ledger.md` (optional, tracked by the workspace repo) holds review nits, one line each:
-`- YYYY-MM-DD | <file:line> | <fix in one sentence> | <source: review/branch and 7-char head>`. Allowed besides entries: blank
-lines, `#` headings and an HTML comment block. Done = delete the line (history is in git). `day check` reports an invalid line as a finding
-with its line number (exit 1: bad date, date after today, missing field, source without a 7-char hex head). Display only, no gate: with
-at least one valid entry `check` prints `Schuldenbuch: N offen, M älter als 3 Tage` and lists the entries older than 3 days. The file
-does not count toward the section limits. `day` never writes it.
+
+    - YYYY-MM-DD | <file[:line]> | <fix in one sentence> | <source: review/branch and 7-char head>
+
+Date and file are the first two fields (the line number is optional, a file without one is fine); the source is the part after the
+last ` | `; the fix is everything in between and may contain `|` (for example a command in backticks). Allowed besides entries:
+blank lines, `#` headings and HTML comment blocks (`<!-- ... -->`, text after `-->` is a finding). Trailing space, tab or CR,
+leading indentation and a UTF-8 BOM are tolerated. Done = delete the line (history is in git).
+
+`day check` reports an invalid line as a finding with its line number (exit 1): not an entry, bad date, date after today, source
+without a 7-char hex head (a 40-char hash does not count), comment not closed. Otherwise display only, no gate: with at least one
+valid entry `check` prints `Schuldenbuch: N offen, M älter als 3 Tage` and lists the entries older than 3 days. The file does not count
+toward the section limits. `day` never writes it.
 
 ## Git model
 

@@ -424,13 +424,16 @@ const (
 )
 
 var (
-	ledgerRe = regexp.MustCompile(`^- (\d{4}-\d{2}-\d{2}) \| ([^|]*[^| ]) \| ([^|]*[^| ]) \| ([^|]*[^| ])$`)
+	// Date and file are the first two fields, the source is the part after the LAST " | ", the fix is everything in between
+	// (it may contain "|", for example in a command in backticks).
+	ledgerRe = regexp.MustCompile(`^- (\d{4}-\d{2}-\d{2}) \| ([^|]*[^| ]) \| (.*[^| ]) \| ([^|]*[^| ])$`)
 	hex7Re   = regexp.MustCompile(`(^|[^0-9A-Za-z])[0-9a-f]{7}($|[^0-9A-Za-z])`)
 )
 
 // checkLedger validates dir/debt-ledger.md (a missing file is fine). Allowed lines: blank, "#" headings, an HTML
-// comment block, and entries "- JJJJ-MM-TT | Datei:Zeile | Fix | Quelle" (the source holds a 7-char head). It returns
-// the findings (with line numbers), the number of open entries and the entries older than ledgerDays days.
+// comment block, and entries "- JJJJ-MM-TT | Datei[:Zeile] | Fix | Quelle" (the source holds a 7-char head). Trailing
+// space/tab/CR, leading indentation and a UTF-8 BOM are tolerated. It returns the findings (with line numbers), the
+// number of open entries and the entries older than ledgerDays days.
 func checkLedger(dir, today string) (findings []string, open int, old []string) {
 	b, err := os.ReadFile(filepath.Join(dir, ledgerFile))
 	if err != nil {
@@ -440,25 +443,23 @@ func checkLedger(dir, today string) (findings []string, open int, old []string) 
 		return []string{ledgerFile + ": nicht lesbar: " + err.Error()}, 0, nil
 	}
 	now, _ := time.Parse("2006-01-02", today)
-	inComment := false
-	for i, l := range strings.Split(string(b), "\n") {
-		l = strings.TrimRight(l, "\r")
+	text := strings.TrimPrefix(string(b), "\ufeff")
+	commentFrom := 0 // line number of an open "<!--", 0 when none
+	for i, l := range strings.Split(text, "\n") {
 		bad := func(why string) {
 			findings = append(findings, fmt.Sprintf("%s: Zeile %d: %s", ledgerFile, i+1, why))
 		}
 		t := strings.TrimSpace(l)
-		if inComment {
-			inComment = !strings.Contains(t, "-->")
-			continue
-		}
-		switch {
-		case t == "" || strings.HasPrefix(t, "#"):
-		case strings.HasPrefix(t, "<!--"):
-			inComment = !strings.Contains(t, "-->")
-		default:
-			m := ledgerRe.FindStringSubmatch(l)
+		if commentFrom == 0 && strings.HasPrefix(t, "<!--") {
+			commentFrom = i + 1
+			t = t[len("<!--"):]
+		} else if commentFrom == 0 {
+			if t == "" || strings.HasPrefix(t, "#") {
+				continue
+			}
+			m := ledgerRe.FindStringSubmatch(t)
 			if m == nil {
-				bad("kein Eintrag `- JJJJ-MM-TT | Datei:Zeile | Fix | Quelle`")
+				bad("kein Eintrag `- JJJJ-MM-TT | Datei[:Zeile] | Fix | Quelle`")
 				continue
 			}
 			d, err := time.Parse("2006-01-02", m[1])
@@ -472,10 +473,21 @@ func checkLedger(dir, today string) (findings []string, open int, old []string) 
 			default:
 				open++
 				if int(now.Sub(d).Hours()/24) > ledgerDays {
-					old = append(old, l)
+					old = append(old, t)
 				}
 			}
+			continue
 		}
+		// inside a comment (t is the rest of the line): it ends at "-->", nothing may follow
+		if k := strings.Index(t, "-->"); k >= 0 {
+			commentFrom = 0
+			if strings.TrimSpace(t[k+3:]) != "" {
+				bad("Text hinter -->")
+			}
+		}
+	}
+	if commentFrom != 0 {
+		findings = append(findings, fmt.Sprintf("%s: HTML-Kommentar ab Zeile %d nicht geschlossen", ledgerFile, commentFrom))
 	}
 	return
 }
