@@ -13,10 +13,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -431,12 +433,29 @@ func runStw(offline bool, workdir string) (out []byte, exit1 bool, err error) {
 	c := exec.CommandContext(ctx, path, argv...)
 	c.Env = stwEnv()
 	c.Dir = workdir // stw reads the workspace around its working directory
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) } // the whole group, git children included
+	ownGroup(c)     // own process group: the limit and signals kill stw's git children too
 	so, se := &limitBuf{max: stwMaxBytes}, &limitBuf{max: 64 << 10, quiet: true}
 	c.Stdout, c.Stderr = so, se
 	c.WaitDelay = 2 * time.Second
+	// A signal to day (Ctrl-C, SIGTERM, SIGHUP) must end stw as well: stw is in its own group and would run on orphaned.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+	var got atomic.Value
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case sg := <-sigs:
+			got.Store(sg)
+			cancel()
+		case <-done:
+		}
+	}()
 	rerr := c.Run()
+	if sg, ok := got.Load().(os.Signal); ok {
+		return nil, false, sigErr{sg}
+	}
 	switch {
 	case ctx.Err() != nil:
 		return nil, false, fmt.Errorf("Zeitlimit von %d s überschritten", int(limit.Seconds()))
@@ -454,6 +473,18 @@ func runStw(offline bool, workdir string) (out []byte, exit1 bool, err error) {
 		return so.buf.Bytes(), ee.ExitCode() == 1, errors.New(msg)
 	}
 	return nil, false, errors.New("stw nicht ausführbar: " + oneLine(rerr.Error(), textMax))
+}
+
+// sigErr: day itself was interrupted; exit code 128+signal, nothing is written.
+type sigErr struct{ sig os.Signal }
+
+func (e sigErr) Error() string { return "abgebrochen durch Signal " + e.sig.String() }
+
+func (e sigErr) code() int {
+	if n, ok := e.sig.(syscall.Signal); ok {
+		return 128 + int(n)
+	}
+	return 130
 }
 
 func readLimited(r io.Reader) ([]byte, error) {
@@ -644,6 +675,11 @@ func cmdBriefing(a args) int {
 	boardStructure(bp) // fail fast on a damaged board before stw runs
 	now := a.date + " " + a.time
 	doc, err := loadStw(a)
+	var se sigErr
+	if errors.As(err, &se) {
+		fmt.Fprintf(os.Stderr, "day: %s, nichts geschrieben\n", se.Error())
+		return se.code()
+	}
 	// stw may take a while and the coordinator edits the plan meanwhile: read the board again after the run, and again
 	// right before the rename if the file changed in between.
 	var lines []string

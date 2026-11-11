@@ -683,6 +683,21 @@ OUT=$(PATH="$T/stub/grand:$PATH" DAY_STW_TIMEOUT_SEC=1 "$DAY" briefing --dir "$W
 GP=$(cat "$T/grand.pid"); GONE=n; for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$GP" 2>/dev/null || { GONE=y; break; }; sleep 0.3; done
 chk "Zeitlimit beendet auch Enkelprozesse" eq "$GONE" y
 [ "$GONE" = y ] || kill "$GP" 2>/dev/null
+# Signal an day: stw-Gruppe wird beendet, nichts geschrieben, Exit 128+Signal
+mkstub sigs 'sleep 31 & echo $! > "'"$T"'/sig.pid"; sleep 31 & wait'
+for SIG in TERM INT HUP; do
+  mkboard "$WS14/dayboard" 2026-11-11 0 0 0; cp "$WS14/dayboard/DAYBOARD.md" "$T/sig.before"; rm -f "$T/sig.pid"
+  PATH="$T/stub/sigs:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 > "$T/sig.out" 2>&1 &
+  DP=$!; for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$T/sig.pid" ] && break; sleep 0.2; done
+  kill -$SIG "$DP"; wait "$DP"; SRC=$?
+  case $SIG in TERM) WANT=143;; INT) WANT=130;; HUP) WANT=129;; esac
+  GP=$(cat "$T/sig.pid"); GONE=n; for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$GP" 2>/dev/null || { GONE=y; break; }; sleep 0.3; done
+  [ "$GONE" = y ] || kill "$GP" 2>/dev/null
+  chk "SIG$SIG an day: Exit $WANT" eq "$SRC" "$WANT"
+  chk "SIG$SIG an day: Gruppenprozess beendet" eq "$GONE" y
+  chk "SIG$SIG an day: Board unverändert" cmp -s "$T/sig.before" "$WS14/dayboard/DAYBOARD.md"
+  chk "SIG$SIG an day: Meldung" has "$(cat "$T/sig.out")" "nichts geschrieben"
+done
 # Rennen: Planänderung während des stw-Laufs geht nicht verloren
 mkboard "$WS14/dayboard" 2026-11-11 0 0 0
 mkstub slowok 'sleep 1.5; cat "'"$FX"'/rust-online.json"'
