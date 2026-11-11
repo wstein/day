@@ -365,11 +365,32 @@ chk "ledger Monat 13: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 5: ungült
 chk "ledger Quelle ohne Head: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 6: Quelle ohne 7-stelligen Head"
 chk "ledger Zukunft: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 7: Datum 2026-11-05 liegt nach heute 2026-11-04"
 chk "ledger leeres Feld: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 8: kein Eintrag"
-chk "ledger fünf Felder: Zeilennummer" has "$OUT" "debt-ledger.md: Zeile 9: kein Eintrag"
-chk "ledger: gültiger Eintrag zählt" has "$OUT" "Schuldenbuch: 1 offen, 0 älter als 3 Tage"
-printf -- '- 2026-10-01 | a.rs:1 | Fix | 1234567\n' > "$L/debt-ledger.md"
+chk "ledger Pipe im Fix ist gültig (Zeile 9 kein Fund)" eq "$(printf '%s\n' "$OUT" | grep -c 'Zeile 9:')" 0
+chk "ledger: gültige Einträge zählen" has "$OUT" "Schuldenbuch: 2 offen, 0 älter als 3 Tage"
+printf -- '- 2026-11-04 | a.rs:1 | `git diff a...b | git patch-id --stable` nutzen | rev 1234567\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger Pipe in Backticks im Fix: gültig" eq "$RC|$OUT" "0|Schuldenbuch: 1 offen, 0 älter als 3 Tage"
+printf -- '- 2026-11-04 | a.rs:1 | Fix | 1234567 | zu viel\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger Quelle ist der Rest nach dem letzten ' | ': hier ohne Head" has "$OUT" "Zeile 1: Quelle ohne 7-stelligen Head"
+printf -- '- 2026-11-04 | a.rs:1 | Fix | 1234567  \t\n  - 2026-11-04 | b.rs | Fix | 1234567\r\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger Leerraum am Ende, Einrückung, CRLF: gültig" eq "$RC|$OUT" "0|Schuldenbuch: 2 offen, 0 älter als 3 Tage"
+printf '\xef\xbb\xbf- 2026-11-04 | a.rs:1 | Fix | 1234567\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger BOM am Dateianfang: gültig" eq "$RC|$OUT" "0|Schuldenbuch: 1 offen, 0 älter als 3 Tage"
+printf -- '- 2026-11-04 | a.rs:1 | Fix | 0123456789012345678901234567890123456789\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger 40-hex-Quelle: abgelehnt" has "$OUT" "Zeile 1: Quelle ohne 7-stelligen Head"
+printf -- '<!-- einzeilig -->\n- 2026-11-04 | a.rs:1 | Fix | 1234567\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger einzeiliger Kommentar, danach Eintrag" eq "$RC|$OUT" "0|Schuldenbuch: 1 offen, 0 älter als 3 Tage"
+printf -- '# T\n<!--\nKopf\n- 2026-01-01 | im | Kommentar | 1234567\n-->\n\n- 2026-11-04 | a.rs:1 | Fix | 1234567\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger Eintrag nach mehrzeiligem Kommentar zählt, Kommentar nicht" eq "$RC|$OUT" "0|Schuldenbuch: 1 offen, 0 älter als 3 Tage"
+printf -- '<!--\nKopf\n- 2026-11-04 | a.rs:1 | Fix | 1234567\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger offener Kommentar: Fund mit Startzeile" eq "$RC|$OUT" "1|debt-ledger.md: HTML-Kommentar ab Zeile 1 nicht geschlossen"
+printf -- '<!--\nKopf --> Text\n- 2026-11-04 | a.rs:1 | Fix | 1234567\n<!-- a --> b\n' > "$L/debt-ledger.md"; checkrun "$L"
+chk "ledger Text hinter --> (mehrzeilig): Fund" has "$OUT" "debt-ledger.md: Zeile 2: Text hinter -->"
+chk "ledger Text hinter --> (einzeilig): Fund" has "$OUT" "debt-ledger.md: Zeile 4: Text hinter -->"
+mkboard "$L" 2026-11-04 1 0 0
+printf -- '- 2026-10-01 | a.rs:1 | Fix | 1234567\n- 2026-10-02 | a.rs:2 | Fix | 1234567\n' > "$L/debt-ledger.md"
 G_BEFORE=$(sum "$L/DAYBOARD.md")
-chk "ledger zählt nicht in Backlog-Grenzen (Jetzt 0)" eq "$(checkrun "$L"; printf '%s' "$RC")" 0
+checkrun "$L"
+chk "ledger zählt nicht in Backlog-Grenzen (Jetzt 1 plus 2 Einträge: Exit 0)" eq "$RC" 0
 chk "ledger ändert DAYBOARD.md nicht" eq "$(sum "$L/DAYBOARD.md")" "$G_BEFORE"
 
 # Guard: kein maschinengebundener Pfad in den Skripten
