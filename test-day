@@ -305,6 +305,22 @@ mkboard "$C" 2026-11-04 0 0 0; edit "$C" '/stw:end/d'; checkrun "$C"
 chk "check end fehlt" has "$OUT" "Fakten-Block: <!-- stw:end --> fehlt"
 mkboard "$C" 2026-11-04 0 0 0; edit "$C" '/stw:begin/d'; checkrun "$C"
 chk "check begin fehlt" has "$OUT" "Fakten-Block: <!-- stw:begin --> fehlt"
+# Marker: genau ein begin vor genau einem end, Funde mit Zeilennummer
+mkboard "$C" 2026-11-04 0 0 0; BL=$(grep -n 'stw:begin' "$C/DAYBOARD.md" | cut -d: -f1); EL=$(grep -n 'stw:end' "$C/DAYBOARD.md" | cut -d: -f1)
+edit "$C" '/stw:end/d'; checkrun "$C"
+chk "check end fehlt: Zeile von begin genannt" has "$OUT" "Fakten-Block: <!-- stw:end --> fehlt (<!-- stw:begin --> in Zeile $BL)"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" '/stw:begin/d'; checkrun "$C"
+chk "check begin fehlt: Zeile von end genannt" has "$OUT" "(<!-- stw:end --> in Zeile $((EL-1)))"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" 's/^<!-- stw:end -->$/<!-- stw:end -->\
+<!-- stw:end -->/'; checkrun "$C"
+chk "check end doppelt: exit 1 mit Zeilen" eq "$RC|$OUT" "1|Fakten-Block: <!-- stw:end --> mehrfach (Zeilen $EL, $((EL+1)))"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" 's/^<!-- stw:begin -->$/<!-- stw:begin -->\
+<!-- stw:begin -->/'; checkrun "$C"
+chk "check begin verschachtelt: exit 1 mit Zeilen" eq "$RC|$OUT" "1|Fakten-Block: <!-- stw:begin --> mehrfach (Zeilen $BL, $((BL+1)))"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" 's/^<!-- stw:begin -->$/<!-- stw:XX -->/;s/^<!-- stw:end -->$/<!-- stw:begin -->/;s/^<!-- stw:XX -->$/<!-- stw:end -->/'; checkrun "$C"
+chk "check Reihenfolge vertauscht: exit 1 mit Zeilen" eq "$RC|$OUT" "1|Fakten-Block: <!-- stw:end --> in Zeile $BL steht vor <!-- stw:begin --> in Zeile $EL"
+mkboard "$C" 2026-11-04 0 0 0; edit "$C" 's/^facts$/foo <!-- stw:end --> bar/'; checkrun "$C"
+chk "check Marker mitten in einer Zeile zählt nicht" eq "$RC|$OUT" "0|"
 checkrun "$T/gibtsnicht"
 chk "check ohne Board: exit 2" eq "$RC" 2
 run check --dir "$C" --date 2026-13-01

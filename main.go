@@ -492,6 +492,54 @@ func checkLedger(dir, today string) (findings []string, open int, old []string) 
 	return
 }
 
+// findMarkers returns the 0-based line indexes of the facts markers (whole line, surrounding space tolerated).
+func findMarkers(lines []string) (b, en []int) {
+	for i, l := range lines {
+		switch strings.TrimSpace(l) {
+		case begin:
+			b = append(b, i)
+		case end:
+			en = append(en, i)
+		}
+	}
+	return
+}
+
+// markerFindings describes what is wrong with the facts block markers (with 1-based line numbers); nil when exactly one
+// begin is followed by exactly one end. Used by check and by briefing.
+func markerFindings(b, en []int) []string {
+	const p = "Fakten-Block: "
+	lines := func(x []int) string {
+		var s []string
+		for _, i := range x {
+			s = append(s, fmt.Sprint(i+1))
+		}
+		return strings.Join(s, ", ")
+	}
+	switch {
+	case len(b) == 0 && len(en) == 0:
+		return []string{p + "Markierungen fehlen"}
+	case len(b) == 0:
+		return []string{p + begin + " fehlt (" + end + " in Zeile " + lines(en) + ")"}
+	case len(en) == 0:
+		return []string{p + end + " fehlt (" + begin + " in Zeile " + lines(b) + ")"}
+	}
+	var f []string
+	if len(b) > 1 {
+		f = append(f, p+begin+" mehrfach (Zeilen "+lines(b)+")")
+	}
+	if len(en) > 1 {
+		f = append(f, p+end+" mehrfach (Zeilen "+lines(en)+")")
+	}
+	if len(f) == 0 && b[0] > en[0] {
+		f = append(f, fmt.Sprintf("%s%s in Zeile %d steht vor %s in Zeile %d", p, end, en[0]+1, begin, b[0]+1))
+	}
+	if len(f) > 0 {
+		return f
+	}
+	return nil
+}
+
 func cmdCheck(a args) int {
 	lines := strings.Split(read(filepath.Join(a.dir, "DAYBOARD.md")), "\n")
 	var f []string
@@ -527,27 +575,8 @@ func cmdCheck(a args) int {
 			f = append(f, fmt.Sprintf("%s: %d Einträge (max %d)", n, entries, lim))
 		}
 	}
-	var b, en []int
-	for i, l := range lines {
-		switch strings.TrimSpace(l) {
-		case begin:
-			b = append(b, i)
-		case end:
-			en = append(en, i)
-		}
-	}
-	switch {
-	case len(b) == 0 && len(en) == 0:
-		f = append(f, "Fakten-Block: Markierungen fehlen")
-	case len(b) == 0 || len(en) == 0:
-		miss := end
-		if len(b) == 0 {
-			miss = begin
-		}
-		f = append(f, "Fakten-Block: "+miss+" fehlt")
-	case len(b) > 1 || len(en) > 1 || b[0] > en[0]:
-		f = append(f, "Fakten-Block: Markierungen doppelt oder in falscher Reihenfolge")
-	}
+	b, en := findMarkers(lines)
+	f = append(f, markerFindings(b, en)...)
 	lf, open, old := checkLedger(a.dir, a.date)
 	f = append(f, lf...)
 	for _, x := range f {
