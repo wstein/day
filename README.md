@@ -77,7 +77,7 @@ touched. `stw status` does not know the dayboard; `day` reads the stw JSON with 
 - Errors (stw missing, fails, over the limit, unknown `schema_version`, broken JSON, missing required fields `command`, `repos`, `summary`,
   `repos[].name`): the line `stw status nicht verfügbar: <reason>` is printed, the old block stays, its Stand line gets
   `; veraltet seit <time>: <reason>` once, exit 0. Exit 2 only for usage errors, an unreadable input file, an unreadable or unwritable
-  dayboard directory and a damaged marker structure (one marker, repeated or swapped markers: reported with line numbers, nothing written).
+  dayboard directory and a damaged marker structure (one marker, repeated or swapped markers: reported with line numbers, nothing written), and a board that keeps changing during the write (three attempts, nothing written). A signal to `day` (Ctrl-C, SIGTERM, SIGHUP) kills the stw process group as well, writes nothing and exits with 128 plus the signal number (130, 143, 129). On Windows `day` builds, but stw is not put in its own process group (no group kill); only Linux and macOS are released.
 - `check` requires exactly one `<!-- stw:begin -->` before exactly one `<!-- stw:end -->` (findings with line numbers). `rollover` leaves the
   block as it is: it is neither moved to the logbook nor deleted.
 - `$DAY_STW_TIMEOUT_SEC` shortens the stw limit (for tests).
