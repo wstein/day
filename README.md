@@ -27,6 +27,15 @@ top level; otherwise an error, exit 2. `init` creates the folder if it does not 
 `LOGBOOK.md` and a `BACKLOG.md` template (existing files are left unchanged; `rollover` and `check` do not touch
 `BACKLOG.md`); `rollover` and `check` need an existing board.
 
+## Debt ledger
+
+`<dir>/debt-ledger.md` (optional, tracked by the workspace repo) holds review nits, one line each:
+`- YYYY-MM-DD | <file:line> | <fix in one sentence> | <source: review/branch and 7-char head>`. Allowed besides entries: blank
+lines, `#` headings and an HTML comment block. Done = delete the line (history is in git). `day check` reports an invalid line as a finding
+with its line number (exit 1: bad date, date after today, missing field, source without a 7-char hex head). Display only, no gate: with
+at least one valid entry `check` prints `Schuldenbuch: N offen, M älter als 3 Tage` and lists the entries older than 3 days. The file
+does not count toward the section limits. `day` never writes it.
+
 ## Git model
 
 The dayboard folder is part of the enclosing (workspace) repository, not a repository of its own:
