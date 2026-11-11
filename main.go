@@ -652,7 +652,7 @@ const usage = `usage: day [-h] {init,rollover,check,briefing} ...
              prüft auch debt-ledger.md (falls vorhanden) und zeigt Einträge älter als 3 Tage an (nur Anzeige)
   briefing   stw-Fakten in den Block zwischen den stw-Markern schreiben und mit dem Plan-Überblick ausgeben
              day briefing [DATEI|-] [--print] [--offline] [--dir D] [--date JJJJ-MM-TT] [--time HH:MM]
-             DATEI: JSON von "stw status --json" (- = Standardeingabe); ohne Argument ruft day stw selbst auf (--offline wird weitergereicht)
+             DATEI: JSON von "stw status --json" (- = Standardeingabe); ohne Argument ruft day stw im Workspace des Dayboards auf (--offline wird weitergereicht; Go-stw liefert offline schema 1)
              --print: nichts schreiben, nur anzeigen
 
 --dir: Dayboard-Verzeichnis (Default $DAY_DIR, sonst ./dayboard im Haupt-Checkout des Git-Repos; init legt es an)
