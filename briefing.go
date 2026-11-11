@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 )
@@ -30,6 +31,7 @@ const (
 	briefingRepo = 60 // count lines shown
 	nameMax      = 40
 	textMax      = 120
+	maxReasons   = 5 // reasons shown per repository
 )
 
 // ---- untrusted text ----
@@ -249,13 +251,19 @@ func actionItems(d *stwDoc) []string {
 			continue
 		}
 		var rs []string
-		for _, x := range r.Reasons {
+		for i, x := range r.Reasons {
+			if i == maxReasons {
+				rs = append(rs, "…")
+				break
+			}
 			rs = append(rs, safe(x, 30))
 		}
 		out = append(out, safe(r.name(), nameMax)+": "+strings.Join(rs, ", "))
 	}
 	return out
 }
+
+func (d *stwDoc) fromActions() bool { return d.Actions != nil }
 
 func noticeItems(d *stwDoc) []string {
 	var out []string
@@ -312,7 +320,14 @@ func renderStw(d *stwDoc, stand string) []string {
 		}
 	}
 	items := actionItems(d)
-	out = append(out, "", fmt.Sprintf("Handlungspunkte (%d):", len(items)))
+	itemLabel, noteFmt := "Repos mit Aufmerksamkeit", "Hinweise (abgeleitet, %d):"
+	if d.fromActions() {
+		itemLabel = "Handlungspunkte"
+	}
+	if d.Notices != nil {
+		noteFmt = "Hinweise (%d):"
+	}
+	out = append(out, "", fmt.Sprintf("%s (%d):", itemLabel, len(items)))
 	if len(items) == 0 {
 		out = append(out, "- keine")
 	}
@@ -324,11 +339,15 @@ func renderStw(d *stwDoc, stand string) []string {
 		out = append(out, "- "+it)
 	}
 	notes := noticeItems(d)
-	out = append(out, "", fmt.Sprintf("Hinweise (%d):", len(notes)))
+	out = append(out, "", fmt.Sprintf(noteFmt, len(notes)))
 	if len(notes) == 0 {
 		out = append(out, "- keine")
 	}
-	for _, n := range notes {
+	for i, n := range notes {
+		if i == briefingTopN {
+			out = append(out, more(len(notes)-i))
+			break
+		}
 		out = append(out, "- "+n)
 	}
 	total, att := len(repos), len(items)
@@ -353,13 +372,17 @@ func renderStw(d *stwDoc, stand string) []string {
 // ---- running stw ----
 
 type limitBuf struct {
-	buf  bytes.Buffer
-	max  int
-	over bool
+	buf   bytes.Buffer
+	max   int
+	over  bool
+	quiet bool // drop what exceeds max without an error (stderr)
 }
 
 func (l *limitBuf) Write(p []byte) (int, error) {
 	if l.buf.Len()+len(p) > l.max {
+		if l.quiet {
+			return len(p), nil
+		}
 		l.over = true
 		return 0, errors.New("Ausgabe zu groß")
 	}
@@ -390,7 +413,7 @@ func oneLine(s string, max int) string {
 
 // runStw runs `stw status --json [--offline]` from PATH (no shell). stw exits 1 and still prints its JSON when a
 // repository cannot be read locally; exit1 reports that case so the caller may still use a valid document.
-func runStw(offline bool) (out []byte, exit1 bool, err error) {
+func runStw(offline bool, workdir string) (out []byte, exit1 bool, err error) {
 	path, lerr := exec.LookPath("stw")
 	if lerr != nil {
 		return nil, false, errors.New("stw nicht im PATH gefunden")
@@ -407,7 +430,10 @@ func runStw(offline bool) (out []byte, exit1 bool, err error) {
 	}
 	c := exec.CommandContext(ctx, path, argv...)
 	c.Env = stwEnv()
-	so, se := &limitBuf{max: stwMaxBytes}, &limitBuf{max: 64 << 10}
+	c.Dir = workdir // stw reads the workspace around its working directory
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) } // the whole group, git children included
+	so, se := &limitBuf{max: stwMaxBytes}, &limitBuf{max: 64 << 10, quiet: true}
 	c.Stdout, c.Stderr = so, se
 	c.WaitDelay = 2 * time.Second
 	rerr := c.Run()
@@ -450,7 +476,7 @@ func loadStw(a args) (*stwDoc, error) {
 		}
 		data = b
 	case "":
-		out, exit1, err := runStw(a.offline)
+		out, exit1, err := runStw(a.offline, filepath.Dir(a.dir))
 		if err != nil {
 			if exit1 {
 				if d, perr := parseStw(out); perr == nil {
@@ -460,6 +486,13 @@ func loadStw(a args) (*stwDoc, error) {
 			return nil, err
 		}
 		data = out
+		if a.offline {
+			d, err := parseStw(data)
+			if err != nil && strings.Contains(err.Error(), "schema_version 1 gelesen") {
+				return nil, errors.New("Go-stw liefert offline schema 1; ohne --offline aufrufen")
+			}
+			return d, err
+		}
 	default:
 		f, err := os.Open(a.file)
 		if err != nil {
@@ -479,12 +512,23 @@ func loadStw(a args) (*stwDoc, error) {
 
 // replaceBlock returns the board text with the lines between the markers (bi/ei are 0-based line indexes of the markers)
 // replaced, or, without markers (bi < 0), with a new marked block appended once.
-func replaceBlock(lines []string, bi, ei int, block []string) string {
+func replaceBlock(lines []string, bi, ei int, block []string, cr bool) string {
+	if cr { // keep the line ending of a CRLF board
+		nb := make([]string, 0, len(block))
+		for _, l := range block {
+			nb = append(nb, strings.TrimSuffix(l, "\r")+"\r")
+		}
+		block = nb
+	}
 	if bi < 0 {
 		for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
 			lines = lines[:len(lines)-1]
 		}
-		lines = append(append(append(append([]string{}, lines...), "", begin), block...), end, "")
+		c := ""
+		if cr {
+			c = "\r"
+		}
+		lines = append(append(append(append([]string{}, lines...), c, begin+c), block...), end+c, "")
 		return strings.Join(lines, "\n")
 	}
 	out := append(append(append([]string{}, lines[:bi+1]...), block...), lines[ei:]...)
@@ -497,7 +541,10 @@ func markStale(block []string, now, reason string) []string {
 	for i, l := range out {
 		if strings.HasPrefix(l, "Stand ") {
 			if !strings.Contains(l, "; veraltet seit ") {
-				out[i] = l + "; veraltet seit " + now + ": " + safe(reason, textMax)
+				out[i] = strings.TrimSuffix(l, "\r") + "; veraltet seit " + now + ": " + safe(reason, textMax)
+				if strings.HasSuffix(l, "\r") {
+					out[i] += "\r"
+				}
 			}
 			break
 		}
@@ -576,37 +623,66 @@ func overview(lines []string, dir, today string) {
 	fmt.Printf("Schuldenbuch: %d offen, %d älter als %d Tage%s\n", open, len(old), ledgerDays, extra)
 }
 
-func cmdBriefing(a args) int {
-	bp := filepath.Join(a.dir, "DAYBOARD.md")
-	lines := strings.Split(read(bp), "\n")
+// boardStructure reads DAYBOARD.md and returns its lines and the marker positions (-1 without markers); a damaged
+// marker structure aborts (exit 2).
+func boardStructure(bp string) (raw string, lines []string, bi, ei int) {
+	raw = read(bp)
+	lines = strings.Split(raw, "\n")
 	b, en := findMarkers(lines)
-	bi, ei := -1, -1
+	bi, ei = -1, -1
 	if len(b) > 0 || len(en) > 0 {
 		if f := markerFindings(b, en); f != nil {
 			panic(die("DAYBOARD.md: " + strings.Join(f, "; ") + " (nichts geschrieben)"))
 		}
 		bi, ei = b[0], en[0]
 	}
+	return
+}
+
+func cmdBriefing(a args) int {
+	bp := filepath.Join(a.dir, "DAYBOARD.md")
+	boardStructure(bp) // fail fast on a damaged board before stw runs
 	now := a.date + " " + a.time
 	doc, err := loadStw(a)
+	// stw may take a while and the coordinator edits the plan meanwhile: read the board again after the run, and again
+	// right before the rename if the file changed in between.
+	var lines []string
 	var block []string
-	var failLine string
-	switch {
-	case err == nil:
-		block = renderStw(doc, now)
-	case bi >= 0:
-		failLine = "stw status nicht verfügbar: " + safe(err.Error(), textMax)
-		block = markStale(lines[bi+1:ei], now, err.Error())
-	default:
-		failLine = "stw status nicht verfügbar: " + safe(err.Error(), textMax)
-	}
-	wrote := ""
-	if block != nil && !a.print {
-		text := replaceBlock(lines, bi, ei, block)
-		if text != strings.Join(lines, "\n") {
-			writeAtomic(bp, []byte(text))
-			wrote = "DAYBOARD.md aktualisiert"
+	var failLine, wrote string
+	for try := 0; ; try++ {
+		var raw string
+		var bi, ei int
+		raw, lines, bi, ei = boardStructure(bp)
+		block, failLine = nil, ""
+		switch {
+		case err == nil:
+			block = renderStw(doc, now)
+		case bi >= 0:
+			failLine = "stw status nicht verfügbar: " + safe(err.Error(), textMax)
+			block = markStale(lines[bi+1:ei], now, err.Error())
+		default:
+			failLine = "stw status nicht verfügbar: " + safe(err.Error(), textMax)
 		}
+		if block == nil || a.print {
+			break
+		}
+		cr := strings.HasSuffix(lines[0], "\r")
+		if bi >= 0 {
+			cr = strings.HasSuffix(lines[bi], "\r")
+		}
+		text := replaceBlock(lines, bi, ei, block, cr)
+		if text == raw {
+			break
+		}
+		if now := read(bp); now != raw {
+			if try >= 2 {
+				panic(die("DAYBOARD.md ändert sich laufend, nichts geschrieben"))
+			}
+			continue
+		}
+		writeAtomic(bp, []byte(text))
+		wrote = "DAYBOARD.md aktualisiert"
+		break
 	}
 	overview(lines, a.dir, a.date)
 	fmt.Println()
@@ -615,7 +691,7 @@ func cmdBriefing(a args) int {
 		fmt.Println()
 	}
 	for _, l := range block {
-		fmt.Println(l)
+		fmt.Println(strings.TrimSuffix(l, "\r"))
 	}
 	if wrote != "" {
 		fmt.Println("\n" + wrote)

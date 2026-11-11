@@ -432,13 +432,13 @@ chk "briefing: Stand-Zeile" has "$(cat "$BR/DAYBOARD.md")" "Stand 2026-11-11 14:
 chk "briefing: Überschrift im Block" eq "$(grep -c '^## stw-Fakten$' "$BR/DAYBOARD.md")" 1
 chk "briefing: Zählzeile je Repo" has "$(cat "$BR/DAYBOARD.md")" "- workharbor: PRs 1 (bot 0) | Issues 0 (bug 0) | Branches 4/4 | Worktrees 0 | Stash 1"
 chk "briefing: Zählzeile All" has "$(cat "$BR/DAYBOARD.md")" "- All: PRs 4 (bot 1) | Issues 7 (bug 2) | Branches 15/19 | Worktrees 3 | Stash 1"
-chk "briefing: Handlungspunkte" has "$(cat "$BR/DAYBOARD.md")" "Handlungspunkte (2):"
+chk "briefing: Handlungspunkte" has "$(cat "$BR/DAYBOARD.md")" "Repos mit Aufmerksamkeit (2):"
 chk "briefing: Handlungspunkt Text" has "$(cat "$BR/DAYBOARD.md")" "- sourcesteward: unstaged, behind"
 chk "briefing: Summary" has "$(cat "$BR/DAYBOARD.md")" "Summary: 2 von 3 Repos brauchen Aufmerksamkeit"
 chk "briefing: Text vor dem Block byte-gleich" cmp -s "$T/br.head" <(head -n "$(wc -l < "$T/br.head")" "$BR/DAYBOARD.md")
 chk "briefing: Marker genau einmal" eq "$(grep -cxF -e '<!-- stw:begin -->' -e '<!-- stw:end -->' "$BR/DAYBOARD.md")" 2
 chk "briefing: Datei endet mit end-Marker" eq "$(tail -1 "$BR/DAYBOARD.md")" "<!-- stw:end -->"
-chk "briefing: ausgegebener Block ist der geschriebene" has "$OUT" "Handlungspunkte (2):"
+chk "briefing: ausgegebener Block ist der geschriebene" has "$OUT" "Repos mit Aufmerksamkeit (2):"
 chk "briefing: meldet Aktualisierung" has "$OUT" "DAYBOARD.md aktualisiert"
 run check --dir "$BR" --date 2026-11-11
 chk "briefing: check danach sauber (Block zählt nicht in Limits)" eq "$RC" 0
@@ -451,17 +451,17 @@ nostand "$BR" > "$T/br.ns1"
 OUT=$("$DAY" briefing "$FX/rust-online.json" --dir "$BR" --date 2026-11-11 --time 16:40 2>&1)
 chk "briefing: nur die Stand-Zeile ändert sich" cmp -s "$T/br.ns1" <(nostand "$BR")
 chk "briefing: neue Stand-Zeile" has "$(cat "$BR/DAYBOARD.md")" "Stand 2026-11-11 16:40,"
-brun --dir "$BR" - < "$FX/rust-offline.json"
+brun --dir "$BR" - < "$FX/real-rust-offline.json"
 chk "briefing -: exit 0" eq "$RC" 0
-chk "briefing -: liest die Standardeingabe" has "$(cat "$BR/DAYBOARD.md")" "- local-only: PRs n/a"
+chk "briefing -: liest die Standardeingabe" has "$(cat "$BR/DAYBOARD.md")" "- sub: PRs n/a"
 chk "briefing -: kein veraltet-Vermerk" eq "$(grep -c veraltet "$BR/DAYBOARD.md")" 0
 
 # Zustände: offline / nicht gelesen / fehlgeschlagen / Untergrenze / ohne Zähler
 B2="$T/br2"; mkboard "$B2" 2026-11-11 0 0 0
-brun "$FX/rust-offline.json" --dir "$B2"
-chk "briefing offline: n/a statt 0" has "$(cat "$B2/DAYBOARD.md")" "- sourcesteward: PRs n/a | Issues n/a | Branches 9/12 | Worktrees 2 | Stash 0"
-chk "briefing no-remote: n/a" has "$(cat "$B2/DAYBOARD.md")" "- local-only: PRs n/a | Issues n/a | Branches 1/0"
-chk "briefing offline: Total n/a" has "$(cat "$B2/DAYBOARD.md")" "- All: PRs n/a | Issues n/a | Branches 10/12 | Worktrees 2 | Stash 0"
+brun "$FX/real-rust-offline.json" --dir "$B2"
+chk "briefing offline: n/a statt 0" has "$(cat "$B2/DAYBOARD.md")" "- ws: PRs n/a | Issues n/a | Branches 1/1 | Worktrees 0 | Stash 0"
+chk "briefing no-remote: n/a" has "$(cat "$B2/DAYBOARD.md")" "- sub: PRs n/a | Issues n/a | Branches 2/1 | Worktrees 0 | Stash 1"
+chk "briefing offline: Total n/a" has "$(cat "$B2/DAYBOARD.md")" "- All: PRs n/a | Issues n/a | Branches 3/2 | Worktrees 0 | Stash 1"
 chk "briefing offline: GitHub nicht gelesen" has "$(cat "$B2/DAYBOARD.md")" "GitHub nicht gelesen"
 chk "briefing offline: Hinweis mit Text" has "$(cat "$B2/DAYBOARD.md")" "- GitHub not read: --offline"
 chk "briefing offline: nie PRs 0" eq "$(grep -c 'PRs 0' "$B2/DAYBOARD.md")" 0
@@ -469,7 +469,7 @@ brun "$FX/rust-notices.json" --dir "$B2"
 chk "briefing failed: ? statt 0" has "$(cat "$B2/DAYBOARD.md")" "- alpha: PRs ? | Issues ? | Branches ?/? | Worktrees ? | Stash ?"
 chk "briefing failed: Issues failed bei ok-PRs" has "$(cat "$B2/DAYBOARD.md")" "- gamma: PRs 1 (bot 0) | Issues ? | Branches 3/3"
 chk "briefing failed: Total ?" has "$(cat "$B2/DAYBOARD.md")" "- All: PRs ? | Issues ? | Branches ?/? | Worktrees ? | Stash ?"
-chk "briefing Hinweise: Anzahl" has "$(cat "$B2/DAYBOARD.md")" "Hinweise (4):"
+chk "briefing Hinweise: Anzahl" has "$(cat "$B2/DAYBOARD.md")" "Hinweise (abgeleitet, 4):"
 chk "briefing Hinweise: PR-Fehler mit Text" has "$(cat "$B2/DAYBOARD.md")" "- beta: pull requests not read (rate limit exceeded)"
 chk "briefing Hinweise: Issues nicht gelesen" has "$(cat "$B2/DAYBOARD.md")" "- gamma: issues not read"
 chk "briefing Hinweise: GitHub-Notiz" has "$(cat "$B2/DAYBOARD.md")" "- token has no read access to some repositories"
@@ -487,6 +487,20 @@ chk "briefing Go-Schema 2: und 2 weitere" has "$(cat "$B2/DAYBOARD.md")" "- … 
 chk "briefing Go-Schema 2: genau zehn Punkte" eq "$(sed -n '/^Handlungspunkte/,/^Hinweise/p' "$B2/DAYBOARD.md" | grep -c '^- [a-z]')" 10
 chk "briefing Go-Schema 2: Notiz mit Code" has "$(cat "$B2/DAYBOARD.md")" "- no-identity: token cannot read user"
 chk "briefing Go-Schema 2: keine Zähler" has "$(cat "$B2/DAYBOARD.md")" "- keine Zähler im JSON"
+
+brun "$FX/real-rust.json" --dir "$B2"
+chk "echt Rust (ohne Token): Zähler n/a, Branches" has "$(cat "$B2/DAYBOARD.md")" "- sub: PRs n/a | Issues n/a | Branches 2/1 | Worktrees 0 | Stash 1"
+chk "echt Rust: Kennzeichnung der Herkunft" has "$(cat "$B2/DAYBOARD.md")" "Repos mit Aufmerksamkeit (2):"
+chk "echt Rust: Hinweis abgeleitet, GitHub-Notiz gekürzt" has "$(cat "$B2/DAYBOARD.md")" "- GitHub not read: no GitHub token found"
+chk "echt Rust: Summary" has "$(cat "$B2/DAYBOARD.md")" "Summary: 2 von 2 Repos brauchen Aufmerksamkeit; GitHub nicht gelesen"
+brun "$FX/real-go.json" --dir "$B2"
+chk "echt Go (actions+counts+totals): Zähler" has "$(cat "$B2/DAYBOARD.md")" "- All: PRs n/a | Issues n/a | Branches 3/2 | Worktrees 0 | Stash 1"
+chk "echt Go: Handlungspunkte nach Priorität" eq "$(grep -A1 '^Handlungspunkte' "$B2/DAYBOARD.md" | tail -1)" "- yellow local-no-upstream sub: branch feature has no upstream"
+chk "echt Go: Hinweise ohne abgeleitet" has "$(cat "$B2/DAYBOARD.md")" "Hinweise (1):"
+chk "echt Go: Notiz mit Code" has "$(cat "$B2/DAYBOARD.md")" "- not-github-origin: origin is not a GitHub repository"
+brun "$FX/real-go-installed.json" --dir "$B2"
+chk "echt Go-Release ohne counts: exit 0, keine Zähler" eq "$RC$(has "$(cat "$B2/DAYBOARD.md")" '- keine Zähler im JSON' && echo y)" "0y"
+chk "echt Go-Release: Handlungspunkte (4)" has "$(cat "$B2/DAYBOARD.md")" "Handlungspunkte (4):"
 
 # Fremdtext: Steuerzeichen und Marker
 B3="$T/br3"; mkboard "$B3" 2026-11-11 1 3 5
@@ -507,7 +521,7 @@ chk "briefing Marker im Fremdtext: kein <!-- im Block" eq "$(sed -n '/^## stw-Fa
 chk "briefing Marker im Fremdtext: entschärft" has "$(cat "$B3/DAYBOARD.md")" '&lt;!-- stw:end --&gt;'
 chk "briefing Marker im Fremdtext: keine neue Überschrift" eq "$(grep -c '^## ' "$B3/DAYBOARD.md")" 6
 chk "briefing Marker im Fremdtext: kein gefälschter Eintrag" eq "$(grep -c '^- fake entry' "$B3/DAYBOARD.md")" 0
-chk "briefing Marker im Fremdtext: jede Fremdzeile beginnt mit '- '" eq "$(sed -n '/^Zähler:/,/^Summary/p' "$B3/DAYBOARD.md" | grep -v -e '^$' -e '^- ' -e '^Zähler:' -e '^Handlungspunkte' -e '^Hinweise' -e '^Summary' | wc -l | tr -d ' ')" 0
+chk "briefing Marker im Fremdtext: jede Fremdzeile beginnt mit '- '" eq "$(sed -n '/^Zähler:/,/^Summary/p' "$B3/DAYBOARD.md" | grep -v -e '^$' -e '^- ' -e '^Zähler:' -e '^Repos mit' -e '^Handlungspunkte' -e '^Hinweise' -e '^Summary' | wc -l | tr -d ' ')" 0
 run check --dir "$B3" --date 2026-11-11
 chk "briefing Marker im Fremdtext: check danach sauber" eq "$RC" 0
 chk "briefing Marker im Fremdtext: Länge der Zeilen begrenzt" eq "$(awk 'length($0)>400' "$B3/DAYBOARD.md" | wc -l | tr -d ' ')" 0
@@ -527,7 +541,7 @@ OUT=$("$DAY" briefing "$FX/wrong-schema.json" --dir "$B4" --date 2026-11-11 --ti
 chk "Schema 3 erneut: Vermerk bleibt, Datei unverändert" eq "$(sum "$B4/DAYBOARD.md")" "$S"
 brun "$FX/rust-online.json" --dir "$B4"
 chk "danach Erfolg: Vermerk weg" eq "$(grep -c 'veraltet' "$B4/DAYBOARD.md")" 0
-for CASE in "go-offline-schema1.json|schema_version 1 gelesen, 2 erwartet" "broken.json|kein gültiges JSON-Objekt" "missing-repos.json|Pflichtfeld repos fehlt"; do
+for CASE in "real-go-offline-schema1.json|schema_version 1 gelesen, 2 erwartet" "broken.json|kein gültiges JSON-Objekt" "missing-repos.json|Pflichtfeld repos fehlt"; do
   F=${CASE%%|*}; WHY=${CASE#*|}
   cp "$T/b4.ok" "$B4/DAYBOARD.md"; brun "$FX/$F" --dir "$B4"
   chk "$F: exit 0" eq "$RC" 0
@@ -618,7 +632,7 @@ OUT=$(PATH="$T/stub/fail:$PATH" "$DAY" briefing --dir "$B10" --date 2026-11-11 -
 chk "stw scheitert: exit 0, Exit-Code und stderr in der Zeile" eq "$RC$(has "$OUT" 'stw status nicht verfügbar: stw endete mit Exit 3: boom' && echo y)" "0y"
 mkstub e1 'cat "'"$FX"'/rust-notices.json"; exit 1'
 OUT=$(PATH="$T/stub/e1:$PATH" "$DAY" briefing --dir "$B10" --date 2026-11-11 --time 14:05 2>&1); RC=$?
-chk "stw Exit 1 mit gültigem JSON: wird gelesen" eq "$RC$(has "$(cat "$B10/DAYBOARD.md")" 'Hinweise (4):' && echo y)" "0y"
+chk "stw Exit 1 mit gültigem JSON: wird gelesen" eq "$RC$(has "$(cat "$B10/DAYBOARD.md")" 'Hinweise (abgeleitet, 4):' && echo y)" "0y"
 mkstub e1b 'echo "kein json"; exit 1'
 OUT=$(PATH="$T/stub/e1b:$PATH" "$DAY" briefing --dir "$B10" --date 2026-11-11 --time 14:05 2>&1); RC=$?
 chk "stw Exit 1 ohne JSON: Fehlerzeile" eq "$RC$(has "$OUT" 'stw status nicht verfügbar: stw endete mit Exit 1' && echo y)" "0y"
@@ -642,6 +656,80 @@ chk "Überblick: Fertig-wenn-Teil weg" eq "$(printf '%s\n' "$OUT" | sed -n '/^Pl
 chk "Überblick: Steuerzeichen maskiert" has "$OUT" '  - Merge \x1b[31mPR'
 chk "Überblick: Heute leer" has "$OUT" "Heute: leer"
 chk "Überblick: Reihenfolge Plan, Schuldenbuch, Block" eq "$(printf '%s\n' "$OUT" | grep -n -e '^Plan' -e '^Schuldenbuch' -e '^## stw-Fakten' | cut -d: -f2- | tr '\n' '|')" "Plan (DAYBOARD.md):|Schuldenbuch: 0 offen, 0 älter als 3 Tage|## stw-Fakten|"
+# stw-Aufruf: Arbeitsverzeichnis, Schema 1 bei --offline, Fehlerfälle
+WS14="$T/ws14"; mkdir -p "$WS14/dayboard" "$T/elsewhere"; mkboard "$WS14/dayboard" 2026-11-11 0 0 0
+mkstub pwd 'pwd -P > "'"$T"'/stub.pwd"; cat "'"$FX"'/rust-online.json"'
+OUT=$(cd "$T/elsewhere" && PATH="$T/stub/pwd:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 2>&1); RC=$?
+chk "stw läuft im Workspace des Dayboards (Elternverzeichnis), nicht im cwd" eq "$(cat "$T/stub.pwd")" "$WS14"
+OUT=$(cd "$T/elsewhere" && PATH="$T/stub/pwd:$PATH" DAY_DIR="$WS14/dayboard" "$DAY" briefing --date 2026-11-11 --time 14:05 2>&1)
+chk "stw-Arbeitsverzeichnis auch mit DAY_DIR" eq "$(cat "$T/stub.pwd")" "$WS14"
+mkstub s1 'cat "'"$FX"'/real-go-offline-schema1.json"'
+OUT=$(PATH="$T/stub/s1:$PATH" "$DAY" briefing --offline --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 2>&1); RC=$?
+chk "Go-stw offline (Schema 1): eigene Meldung" eq "$RC$(has "$OUT" 'stw status nicht verfügbar: Go-stw liefert offline schema 1; ohne --offline aufrufen' && echo y)" "0y"
+OUT=$(PATH="$T/stub/s1:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 2>&1)
+chk "Schema 1 ohne --offline: normale Schema-Meldung" has "$OUT" "schema_version 1 gelesen, 2 erwartet"
+mkstub e3 'cat "'"$FX"'/rust-online.json"; exit 3'
+brun --dir "$WS14/dayboard" ; OUT=$(PATH="$T/stub/e3:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 2>&1)
+chk "stw Exit 3 mit gültigem JSON: nicht verwendet, veraltet" eq "$(has "$OUT" 'stw endete mit Exit 3' && has "$(cat "$WS14/dayboard/DAYBOARD.md")" 'veraltet seit' && echo y)" "y"
+mkstub bigerr 'head -c 100000 /dev/zero | tr "\0" x >&2; cat "'"$FX"'/rust-online.json"'
+mkboard "$WS14/dayboard" 2026-11-11 0 0 0
+OUT=$(PATH="$T/stub/bigerr:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 2>&1)
+chk "stderr über 64 KiB verwirft gültiges JSON nicht" has "$(cat "$WS14/dayboard/DAYBOARD.md")" "- All: PRs 4 (bot 1)"
+mkstub bigout 'head -c 17825792 /dev/zero | tr "\0" " "'
+OUT=$(PATH="$T/stub/bigout:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 2>&1); RC=$?
+chk "stw-Ausgabe über 16 MiB: abgelehnt" eq "$RC$(has "$OUT" 'stw status nicht verfügbar: Ausgabe größer als 16 MiB' && echo y)" "0y"
+mkstub grand 'sleep 31 & echo $! > "'"$T"'/grand.pid"; wait'
+OUT=$(PATH="$T/stub/grand:$PATH" DAY_STW_TIMEOUT_SEC=1 "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 2>&1)
+GP=$(cat "$T/grand.pid"); GONE=n; for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$GP" 2>/dev/null || { GONE=y; break; }; sleep 0.3; done
+chk "Zeitlimit beendet auch Enkelprozesse" eq "$GONE" y
+[ "$GONE" = y ] || kill "$GP" 2>/dev/null
+# Rennen: Planänderung während des stw-Laufs geht nicht verloren
+mkboard "$WS14/dayboard" 2026-11-11 0 0 0
+mkstub slowok 'sleep 1.5; cat "'"$FX"'/rust-online.json"'
+( PATH="$T/stub/slowok:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 > "$T/race.out" 2>&1 ) &
+RP=$!; sleep 0.5
+sed 's/^## Jetzt$/&\
+- neuer Eintrag während des Laufs/' "$WS14/dayboard/DAYBOARD.md" > "$T/race.tmp" && cp "$T/race.tmp" "$WS14/dayboard/DAYBOARD.md"
+wait "$RP"
+chk "Rennen: Eintrag aus der Zwischenzeit bleibt" has "$(cat "$WS14/dayboard/DAYBOARD.md")" "- neuer Eintrag während des Laufs"
+chk "Rennen: Block trotzdem geschrieben" has "$(cat "$WS14/dayboard/DAYBOARD.md")" "- All: PRs 4 (bot 1)"
+mkboard "$WS14/dayboard" 2026-11-11 0 0 0
+( PATH="$T/stub/slowok:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 --time 14:05 > "$T/race.out" 2>&1 ) &
+RP=$!; sleep 0.5; sed '/stw:end/d' "$WS14/dayboard/DAYBOARD.md" > "$T/race.tmp" && cp "$T/race.tmp" "$WS14/dayboard/DAYBOARD.md"; wait "$RP"
+chk "Rennen: Marker in der Zwischenzeit zerstört: nichts geschrieben" eq "$(grep -c 'stw-Fakten' "$WS14/dayboard/DAYBOARD.md")" 0
+# Marker eingerückt: toleriert
+mkboard "$WS14/dayboard" 2026-11-11 0 0 0; edit "$WS14/dayboard" 's/^<!-- stw:/  <!-- stw:/'
+brun "$FX/rust-online.json" --dir "$WS14/dayboard"
+chk "eingerückte Marker werden erkannt" eq "$RC$(has "$(cat "$WS14/dayboard/DAYBOARD.md")" '- All: PRs 4 (bot 1)' && echo y)" "0y"
+chk "eingerückte Marker: nicht doppelt angehängt" eq "$(grep -c 'stw:begin' "$WS14/dayboard/DAYBOARD.md")" 1
+# Dateimodi 0644 und 0640
+for MODE in 644 640; do mkboard "$WS14/dayboard" 2026-11-11 0 0 0; chmod $MODE "$WS14/dayboard/DAYBOARD.md"; brun "$FX/rust-online.json" --dir "$WS14/dayboard"
+  chk "Dateimodus bleibt ($MODE)" eq "$(stat -c %a "$WS14/dayboard/DAYBOARD.md" 2>/dev/null || stat -f %Lp "$WS14/dayboard/DAYBOARD.md")" "$MODE"; done
+# Deckel für Hinweise und Gründe
+python3 - "$T" <<'PYEOF'
+import json,sys
+T=sys.argv[1]
+repos=[{"name":"r%d"%i,"attention":True,"reasons":["a","b","c","d","e","f","g"],"pull_requests":{"read":False,"error":"e%d"%i,"open":[]}} for i in range(300)]
+json.dump({"schema_version":2,"command":"status","repos":repos,"summary":{"total":300,"attention":300}},open(T+"/many.json","w"))
+PYEOF
+brun "$T/many.json" --dir "$WS14/dayboard"
+chk "Hinweise gedeckelt: 300 gezählt, zehn gezeigt" has "$(cat "$WS14/dayboard/DAYBOARD.md")" "Hinweise (abgeleitet, 300):"
+chk "Hinweise gedeckelt: und 290 weitere" has "$(cat "$WS14/dayboard/DAYBOARD.md")" "- … und 290 weitere (stw status)"
+chk "Blockgröße begrenzt (< 100 Zeilen bei 300 Repos)" test "$(wc -l < "$WS14/dayboard/DAYBOARD.md")" -lt 160
+chk "Gründe auf fünf begrenzt" has "$(cat "$WS14/dayboard/DAYBOARD.md")" "- r0: a, b, c, d, e, …"
+# CRLF-Board: Blockzeilen mit CRLF
+mkboard "$WS14/dayboard" 2026-11-11 0 0 0; sed 's/$/\r/' "$WS14/dayboard/DAYBOARD.md" > "$T/crlf.md"; cp "$T/crlf.md" "$WS14/dayboard/DAYBOARD.md"
+brun "$FX/rust-online.json" --dir "$WS14/dayboard"
+chk "CRLF-Board: jede Zeile endet auf CR" eq "$(grep -vc "$(printf '\r')\$" "$WS14/dayboard/DAYBOARD.md")" 0
+chk "CRLF-Board: Block geschrieben" has "$(cat "$WS14/dayboard/DAYBOARD.md")" "- All: PRs 4 (bot 1)"
+OUT=$("$DAY" briefing "$FX/wrong-schema.json" --dir "$WS14/dayboard" --date 2026-11-11 --time 15:00 2>&1)
+chk "CRLF-Board: Stand-Vermerk vor dem CR" has "$(cat "$WS14/dayboard/DAYBOARD.md")" "erwartet$(printf '\r')"
+chk "CRLF-Board: Stand-Zeile endet nicht auf CR im Vermerk" eq "$(grep -c "$(printf '\r'); veraltet" "$WS14/dayboard/DAYBOARD.md")" 0
+# Marker-Struktur vor dem stw-Lauf geprüft (kein Warten)
+mkboard "$WS14/dayboard" 2026-11-11 0 0 0; edit "$WS14/dayboard" '/stw:end/d'
+SECONDS=0; OUT=$(PATH="$T/stub/slow:$PATH" "$DAY" briefing --dir "$WS14/dayboard" --date 2026-11-11 2>&1); RC=$?
+chk "Strukturfehler vor dem stw-Lauf: sofort Exit 2" eq "$RC$([ "$SECONDS" -lt 5 ] && echo y)" "2y"
+
 # rollover: der Block wird weder ins Logbuch übernommen noch gelöscht
 W12="$T/ws12"; mkws "$W12"; B12="$W12/dayboard"; run init --dir "$B12" --date 2026-11-10
 edit "$B12" 's/^## Erledigt heute/&\
