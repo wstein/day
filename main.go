@@ -265,6 +265,7 @@ type args struct {
 	chartroom            string          // check, decisions: folder of the chartroom notes (default <workspace>/chartroom/notes)
 	sub, status, scope   string          // decisions: subcommand, filter/new row fields
 	by, text, source     string          // decisions add: new row fields
+	supersedes           string          // decisions add: ID of the row that the new row replaces
 	have                 map[string]bool // decisions add: flags that were given
 	since                string          // decisions list/open: only rows with this date or later
 	json                 bool            // decisions list/open: JSON output
@@ -668,8 +669,10 @@ const usage = `usage: day [-h] {init,rollover,check,briefing,decisions} ...
              day decisions list [--status S] [--scope X] [--since JJJJ-MM-TT] [--json]
              day decisions open [--scope X] [--since JJJJ-MM-TT] [--json]     (open = list --status proposed)
              day decisions add --by owner|coordinator|agent:<rolle> --status proposed|decided --scope S --text "..." --source "..."
-                               [--date JJJJ-MM-TT] [--dry-run]   hängt EINE Zeile an (ID automatisch), prüft danach die ganze Datei;
+                               [--date JJJJ-MM-TT] [--supersedes ID] [--dry-run]   hängt EINE Zeile an (ID automatisch), prüft danach die ganze Datei;
                                bei einem Verstoß bleibt die Datei unverändert (Exit 1); decided nur mit --by owner
+                               --supersedes ID: die alte Zeile wird superseded (Aussage "...; ersetzt durch <neue ID>."), die neue trägt
+                               die alte ID in Ersetzt; beides in einem Schreibvorgang; sonst wird keine Zeile geändert oder gelöscht
              day decisions from-chartroom   (nur lesen) Chartroom-Notizen mit type/decision und status/decided, die noch in keiner
                                             Quelle [[Titel]] des Registers stehen, als Zeilenvorschläge (proposed, coordinator) ausgeben
              check prüft auch DECISIONS.md (falls vorhanden); [[Titel]]-Quellen werden in --chartroom DIR gesucht
@@ -763,6 +766,8 @@ func parse(argv []string) args {
 		case o == "--by" && a.sub == "add":
 			a.by = need()
 			a.have["by"] = true
+		case o == "--supersedes" && a.sub == "add":
+			a.supersedes = need()
 		case o == "--text" && a.sub == "add":
 			a.text = need()
 			a.have["text"] = true

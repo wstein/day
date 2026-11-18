@@ -600,7 +600,44 @@ func decAdd(a args) int {
 	text := readRegister(a.dir)
 	rows, _ := checkDecisionsText(text, filepath.Dir(a.dir), a.chartroom, a.date)
 	id := nextDecisionID(rows, a.date)
-	row := fmt.Sprintf("- %s | %s | %s | %s | %s | - | %s | %s", id, a.date, a.by, a.status, a.scope, a.text, a.source)
+	repl := "-"
+	var changed []string // old row, before and after
+	if a.supersedes != "" {
+		decInput("supersedes", a.supersedes, false)
+		if !decIDRe.MatchString(a.supersedes) {
+			panic(die("--supersedes: ungültige ID " + a.supersedes))
+		}
+		var old *decRow
+		for i := range rows {
+			if rows[i].ID == a.supersedes {
+				old = &rows[i]
+				break
+			}
+		}
+		if old == nil {
+			panic(die(a.supersedes + " steht nicht im Register"))
+		}
+		switch {
+		case a.status == "proposed":
+			fmt.Println("ein Vorschlag (proposed) ersetzt keine Zeile: " + a.supersedes)
+			return 1
+		case old.Status == "superseded":
+			fmt.Println(a.supersedes + " ist bereits superseded")
+			return 1
+		case old.Status == "revoked":
+			fmt.Println(a.supersedes + " ist revoked und wird nicht ersetzt")
+			return 1
+		}
+		repl = old.ID
+		lines := strings.Split(text, "\n")
+		nr := *old
+		nr.Status = "superseded"
+		nr.Text = strings.TrimSuffix(nr.Text, ".") + "; ersetzt durch " + id + "."
+		lines[old.Line-1] = decRowText(nr)
+		text = strings.Join(lines, "\n")
+		changed = []string{decRowText(nr)}
+	}
+	row := decRowText(decRow{ID: id, Date: a.date, By: a.by, Status: a.status, Scope: a.scope, Replaces: repl, Text: a.text, Source: a.source})
 	if !strings.HasSuffix(text, "\n") {
 		text += "\n"
 	}
@@ -611,6 +648,13 @@ func decAdd(a args) int {
 		}
 		return 1
 	}
+	pre := ""
+	if a.dry {
+		pre = "dry-run: "
+	}
+	for _, c := range changed {
+		fmt.Println(pre + "geändert: " + c)
+	}
 	if a.dry {
 		fmt.Println("dry-run: " + row)
 		return 0
@@ -618,4 +662,9 @@ func decAdd(a args) int {
 	writeAtomicTmp(path, []byte(text), ".DECISIONS.md.*.tmp")
 	fmt.Println("angelegt: " + row)
 	return 0
+}
+
+// decRowText renders a row in the line format.
+func decRowText(r decRow) string {
+	return fmt.Sprintf("- %s | %s | %s | %s | %s | %s | %s | %s", r.ID, r.Date, r.By, r.Status, r.Scope, r.Replaces, r.Text, r.Source)
 }
