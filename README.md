@@ -1,6 +1,6 @@
 # day
 
-Small dayboard tool: `init`, `rollover`, `check` and `briefing` for a dayboard folder (`DAYBOARD.md`, `LOGBOOK.md`, `BACKLOG.md`). The folder has no
+Small dayboard tool: `init`, `rollover`, `check`, `briefing` and `decisions` for a dayboard folder (`DAYBOARD.md`, `LOGBOOK.md`, `BACKLOG.md`). The folder has no
 git repository of its own. One static Go binary, standard library only, no Python, no push, no remote. Needs `git` at run time.
 
 ## Install
@@ -42,6 +42,42 @@ leading indentation and a UTF-8 BOM are tolerated. Done = delete the line (histo
 without a 7-char hex head (a 40-char hash does not count), comment not closed. Otherwise display only, no gate: with at least one
 valid entry `check` prints `Schuldenbuch: N offen, M älter als 3 Tage` and lists the entries older than 3 days. The file does not count
 toward the section limits. `day` never writes it.
+
+## Decision register
+
+`<dir>/DECISIONS.md` (optional, tracked by the workspace repo) is the index of the owner's decisions, one row each:
+
+    - <ID> | <YYYY-MM-DD> | <decider> | <status> | <scope> | <replaces> | <statement> | <source>
+
+`ID` is `D-YYYYMMDD-NN` (the date of the row, NN from 01 without gaps per day, ascending in the file). Decider: `owner` for
+`decided`, `superseded` and `revoked`; `coordinator` or `agent:<role>` for `proposed`. Scope: `global`, `workspace` or a project
+name. `replaces` is an earlier ID or `-`. The statement may contain ` | `; the source is the part after the LAST ` | `:
+`chat YYYY-MM-DD` (same date as the row), a path relative to the workspace (the parent of the dayboard folder; no `..`, not
+absolute) or `[[Title]]` of a note `<chartroom>/<Title>.md`. A replaced row stays, has the status `superseded` and says
+`ersetzt durch <ID>` in its statement; every `superseded` row has a successor.
+
+`day check` validates the file when it exists (nothing otherwise): format, comment block, no CR, no trailing space or tab, no control
+characters, ID format, uniqueness, order and gaps, date, status, decider, scope, statement, `replaces`, supersession and source.
+Each violation is a finding with its line number (exit 1). Display only (no gate): `Entscheidungsregister: N Zeilen, P proposed, Q älter
+als 7 Tage` and the proposed rows older than 7 days. `--chartroom DIR` sets the notes folder (default `<workspace>/chartroom/notes`).
+
+    day decisions list [--status S] [--scope X] [--since YYYY-MM-DD] [--json]
+    day decisions open [--scope X] [--since YYYY-MM-DD] [--json]     # = list --status proposed
+    day decisions from-chartroom [--chartroom DIR]                   # read only
+    day decisions add --by B --status proposed|decided --scope S --text T --source SRC [--date D] [--supersedes ID] [--dry-run]
+
+`list` prints a table (fields masked) or, with `--json`, `{"schema_version": 1, "decisions": [...]}` with one object per row in file
+order (`line`, `id`, `date`, `by`, `status`, `scope`, `replaces` (null for none), `text`, `source`). `from-chartroom` prints rows as
+proposals (`proposed`, `coordinator`, scope `workspace`) for chartroom notes tagged `type/decision` and `status/decided` whose title
+is no `[[Title]]` source of the register: the date comes from `Decision of YYYY-MM-DD` or `Update YYYY-MM-DD` in the note, `?` (and a
+marker line) when there is none; the statement is the first text line, cut at 160 characters. It never writes.
+
+`add` appends ONE row: the ID is the next free one of the date (default today), decided only with `--by owner`. The whole new file is
+checked before anything is written; with a finding the file stays byte-identical (exit 1). The write is atomic (temp file in the same
+directory, fsync, rename) under the lock file `.DECISIONS.md.lock` (a lock older than 30 s counts as left behind; waiting stops after 10 s,
+`DAY_LOCK_WAIT_MS` changes that, exit 2). `--supersedes ID` marks the old row `superseded` with `; ersetzt durch <new ID>.` and puts
+the old ID into `replaces` of the new row, in the same write; a proposal cannot replace a row. Values with newline, tab, control, format or
+separator characters are refused (exit 2); ` | ` is allowed only in `--text`. No row is ever deleted and no row other than the replaced one is changed.
 
 ## briefing
 
@@ -104,7 +140,7 @@ The dayboard folder is part of the enclosing (workspace) repository, not a repos
 ## Tests
 
     go build -o day . && ./test-day     # shell tests against the binary (DAY=/path/to/day for another build)
-    go test ./...                       # a few unit tests
+    go test ./...                       # unit and command tests (decisions: decisions*_test.go)
 
 The shell tests use throw-away directories under `${TMPDIR:-/tmp}` and a private `$HOME`; they need no real dayboard.
 The stw JSON fixtures are in `testdata/stw/` (`real-*.json` are real outputs of the Rust stw, the Go engine, the installed Go release and Go `--offline` (schema 1), paths normalized to `/ws`; the other files are hand-made for failure, attack, truncation and error cases).
