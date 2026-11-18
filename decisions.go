@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -301,6 +302,8 @@ func cmdDecisions(a args) int {
 	case "open":
 		a.status = "proposed"
 		return decList(a)
+	case "from-chartroom":
+		return decFromChartroom(a)
 	}
 	return decList(a)
 }
@@ -348,6 +351,166 @@ func decList(a args) int {
 	fmt.Printf(f, "ID", "DATUM", "ENTSCHEIDER", "STATUS", "GELTUNG", "AUSSAGE")
 	for _, r := range sel {
 		fmt.Printf(f, mask(r.ID, 0, false), mask(r.Date, 0, false), mask(r.By, 0, false), mask(r.Status, 0, false), mask(r.Scope, 0, false), mask(r.Text, 100, false))
+	}
+	return 0
+}
+
+var decNoteDateRes = []*regexp.Regexp{
+	regexp.MustCompile(`Decision of (\d{4}-\d{2}-\d{2})`),
+	regexp.MustCompile(`Update (\d{4}-\d{2}-\d{2})`),
+}
+
+// noteFrontmatter splits a chartroom note into its tags (inline list or YAML list) and the text after the frontmatter.
+// ok is false for a note without frontmatter.
+func noteFrontmatter(text string) (tags []string, body string, ok bool) {
+	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return nil, "", false
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return nil, "", false
+	}
+	clean := func(s string) string { return strings.Trim(strings.TrimSpace(s), `"'`) }
+	for i := 1; i < end; i++ {
+		rest, has := strings.CutPrefix(lines[i], "tags:")
+		if !has {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		if strings.HasPrefix(rest, "[") {
+			for _, t := range strings.Split(strings.Trim(rest, "[] "), ",") {
+				tags = append(tags, clean(t))
+			}
+			break
+		}
+		for j := i + 1; j < end; j++ {
+			item, isItem := strings.CutPrefix(strings.TrimSpace(lines[j]), "- ")
+			if !isItem {
+				break
+			}
+			tags = append(tags, clean(item))
+		}
+		break
+	}
+	return tags, strings.Join(lines[end+1:], "\n"), true
+}
+
+// decCandidate is a proposed register row made from a chartroom note (Date "" = no date in the note).
+type decCandidate struct {
+	Title, Date, Text, ID string
+}
+
+// decCandidates returns the notes with the tags type/decision and status/decided whose title is no [[Titel]] source of
+// a register row, with a proposed next free ID per day. Dated candidates come first (by date, then title).
+func decCandidates(notesDir string, rows []decRow) []decCandidate {
+	ents, err := os.ReadDir(notesDir)
+	if err != nil {
+		panic(die("Chartroom nicht lesbar: " + err.Error()))
+	}
+	named := map[string]bool{}
+	next := map[string]int{}
+	for _, r := range rows {
+		if m := decNoteRe.FindStringSubmatch(r.Source); m != nil {
+			named[m[1]] = true
+		}
+		if m := decIDRe.FindStringSubmatch(r.ID); m != nil {
+			n, _ := strconv.Atoi(m[2])
+			if n >= next[m[1]] {
+				next[m[1]] = n + 1
+			}
+		}
+	}
+	var out []decCandidate
+	for _, e := range ents {
+		title, isMd := strings.CutSuffix(e.Name(), ".md")
+		if !isMd || !e.Type().IsRegular() || named[title] {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(notesDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		tags, body, ok := noteFrontmatter(string(b))
+		if !ok || !containsStr(tags, "type/decision") || !containsStr(tags, "status/decided") {
+			continue
+		}
+		c := decCandidate{Title: title, Text: "(kein Text)"}
+		for _, l := range strings.Split(body, "\n") {
+			if t := strings.TrimSpace(l); t != "" && !strings.HasPrefix(t, "#") {
+				c.Text = mask(t, 160, false)
+				break
+			}
+		}
+	dates:
+		for _, re := range decNoteDateRes {
+			for _, m := range re.FindAllStringSubmatch(body, -1) {
+				if validDate(m[1]) {
+					c.Date = m[1]
+					break dates
+				}
+			}
+		}
+		out = append(out, c)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if (a.Date == "") != (b.Date == "") {
+			return a.Date != ""
+		}
+		if a.Date != b.Date {
+			return a.Date < b.Date
+		}
+		return a.Title < b.Title
+	})
+	for i := range out {
+		c := &out[i]
+		if c.Date == "" {
+			c.ID = "D-????????-??"
+			continue
+		}
+		day := strings.ReplaceAll(c.Date, "-", "")
+		n := next[day]
+		if n == 0 {
+			n = 1
+		}
+		c.ID = fmt.Sprintf("D-%s-%02d", day, n)
+		next[day] = n + 1
+	}
+	return out
+}
+
+func containsStr(l []string, s string) bool {
+	for _, x := range l {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// decFromChartroom prints proposed rows for decided chartroom notes that the register does not name. It writes nothing.
+func decFromChartroom(a args) int {
+	rows, _ := checkDecisionsText(readRegister(a.dir), filepath.Dir(a.dir), a.chartroom, a.date)
+	cands := decCandidates(a.chartroom, rows)
+	if len(cands) == 0 {
+		fmt.Println("keine Kandidaten")
+		return 0
+	}
+	fmt.Printf("Kandidaten (nur Vorschlag, nichts geschrieben): %d\n", len(cands))
+	for _, c := range cands {
+		date := c.Date
+		if date == "" {
+			date = "?"
+			fmt.Printf("# Datum fehlt: [[%s]]\n", mask(c.Title, 0, false))
+		}
+		fmt.Printf("- %s | %s | coordinator | proposed | workspace | - | %s | [[%s]]\n", c.ID, date, c.Text, mask(c.Title, 0, false))
 	}
 	return 0
 }

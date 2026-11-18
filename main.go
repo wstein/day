@@ -662,9 +662,11 @@ const usage = `usage: day [-h] {init,rollover,check,briefing,decisions} ...
   rollover   Tageswechsel ins Logbuch             [--dir D] [--date JJJJ-MM-TT] [--dry-run]
   check      Verstöße melden (Exit 1 bei Funden)  [--dir D] [--date JJJJ-MM-TT]
              prüft auch debt-ledger.md (falls vorhanden) und zeigt Einträge älter als 3 Tage an (nur Anzeige)
-  decisions  Entscheidungsregister DECISIONS.md: list, open     [--dir D] [--chartroom DIR]
+  decisions  Entscheidungsregister DECISIONS.md: list, open, from-chartroom     [--dir D] [--chartroom DIR]
              day decisions list [--status S] [--scope X] [--since JJJJ-MM-TT] [--json]
              day decisions open [--scope X] [--since JJJJ-MM-TT] [--json]     (open = list --status proposed)
+             day decisions from-chartroom   (nur lesen) Chartroom-Notizen mit type/decision und status/decided, die noch in keiner
+                                            Quelle [[Titel]] des Registers stehen, als Zeilenvorschläge (proposed, coordinator) ausgeben
              check prüft auch DECISIONS.md (falls vorhanden); [[Titel]]-Quellen werden in --chartroom DIR gesucht
              (Default <Workspace>/chartroom/notes, Workspace = Elternverzeichnis des Dayboards)
   briefing   stw-Fakten in den Block zwischen den stw-Markern schreiben und mit dem Plan-Überblick ausgeben
@@ -701,11 +703,11 @@ func parse(argv []string) args {
 				fmt.Print(usage)
 				os.Exit(0)
 			}
-			argErr("the following arguments are required: decisions subcommand (list, open)")
+			argErr("the following arguments are required: decisions subcommand (list, open, from-chartroom)")
 		}
 		a.sub, rest = rest[0], rest[1:]
-		if a.sub != "list" && a.sub != "open" {
-			argErr(fmt.Sprintf("argument decisions: invalid choice: '%s' (choose from 'list', 'open')", a.sub))
+		if a.sub != "list" && a.sub != "open" && a.sub != "from-chartroom" {
+			argErr(fmt.Sprintf("argument decisions: invalid choice: '%s' (choose from 'list', 'open', 'from-chartroom')", a.sub))
 		}
 	}
 	listing := a.cmd == "decisions" && (a.sub == "list" || a.sub == "open")
