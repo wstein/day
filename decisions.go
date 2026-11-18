@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -304,6 +305,8 @@ func cmdDecisions(a args) int {
 		return decList(a)
 	case "from-chartroom":
 		return decFromChartroom(a)
+	case "add":
+		return decAdd(a)
 	}
 	return decList(a)
 }
@@ -512,5 +515,107 @@ func decFromChartroom(a args) int {
 		}
 		fmt.Printf("- %s | %s | coordinator | proposed | workspace | - | %s | [[%s]]\n", c.ID, date, c.Text, mask(c.Title, 0, false))
 	}
+	return 0
+}
+
+const (
+	decLockFile  = ".DECISIONS.md.lock"
+	decLockStale = 30 * time.Second
+)
+
+// lockRegister takes the lock file next to the register (O_EXCL) and returns the function that releases it. A lock
+// older than decLockStale counts as left behind by a dead writer and is taken over. It waits DAY_LOCK_WAIT_MS
+// (default 10000) milliseconds, then stops with exit 2. Known narrow window: two writers that find the same stale lock
+// at the same moment can both take it over.
+func lockRegister(dir string) func() {
+	wait := 10 * time.Second
+	if v, err := strconv.Atoi(os.Getenv("DAY_LOCK_WAIT_MS")); err == nil && v >= 0 {
+		wait = time.Duration(v) * time.Millisecond
+	}
+	p := filepath.Join(dir, decLockFile)
+	deadline := time.Now().Add(wait)
+	for {
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			fmt.Fprintf(f, "%d\n", os.Getpid())
+			f.Close()
+			return func() { os.Remove(p) }
+		}
+		if !os.IsExist(err) {
+			panic(die("nicht schreibbar: " + err.Error()))
+		}
+		if st, serr := os.Stat(p); serr == nil && time.Since(st.ModTime()) > decLockStale {
+			os.Remove(p)
+			continue
+		}
+		if time.Now().After(deadline) {
+			panic(die(decisionsFile + " ist gesperrt: " + p + " (ein anderer day decisions add läuft; nach 30 s gilt die Sperre als verwaist)"))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// decInput refuses values that could break the line format: invalid UTF-8, newline, tab and other control, format and
+// separator characters. " | " is allowed only in the statement.
+func decInput(name, v string, pipeOK bool) {
+	bad := !utf8.ValidString(v)
+	for _, c := range v {
+		bad = bad || unicode.In(c, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
+	}
+	if bad {
+		panic(die("--" + name + ": Zeilenumbruch, Tab, Steuer- und Formatzeichen sind nicht erlaubt"))
+	}
+	if !pipeOK && strings.Contains(v, " | ") {
+		panic(die("--" + name + ": ' | ' nicht erlaubt"))
+	}
+}
+
+// nextDecisionID returns the next free ID of the day (the highest NN of that day plus one).
+func nextDecisionID(rows []decRow, date string) string {
+	day := strings.ReplaceAll(date, "-", "")
+	n := 0
+	for _, r := range rows {
+		if m := decIDRe.FindStringSubmatch(r.ID); m != nil && m[1] == day {
+			if v, _ := strconv.Atoi(m[2]); v > n {
+				n = v
+			}
+		}
+	}
+	if n >= 99 {
+		panic(die("mehr als 99 Entscheidungen an einem Tag: " + date))
+	}
+	return fmt.Sprintf("D-%s-%02d", day, n+1)
+}
+
+// decAdd appends one row. The whole new file is checked before it replaces the old one (one atomic write); with a
+// finding the file stays as it was (exit 1). Nothing else is ever changed or deleted.
+func decAdd(a args) int {
+	decInput("by", a.by, false)
+	decInput("scope", a.scope, false)
+	decInput("source", a.source, false)
+	decInput("text", a.text, true)
+	unlock := lockRegister(a.dir)
+	defer unlock()
+	path := filepath.Join(a.dir, decisionsFile)
+	text := readRegister(a.dir)
+	rows, _ := checkDecisionsText(text, filepath.Dir(a.dir), a.chartroom, a.date)
+	id := nextDecisionID(rows, a.date)
+	row := fmt.Sprintf("- %s | %s | %s | %s | %s | - | %s | %s", id, a.date, a.by, a.status, a.scope, a.text, a.source)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	text += row + "\n"
+	if _, findings := checkDecisionsText(text, filepath.Dir(a.dir), a.chartroom, a.date); len(findings) > 0 {
+		for _, f := range findings {
+			fmt.Println(f)
+		}
+		return 1
+	}
+	if a.dry {
+		fmt.Println("dry-run: " + row)
+		return 0
+	}
+	writeAtomicTmp(path, []byte(text), ".DECISIONS.md.*.tmp")
+	fmt.Println("angelegt: " + row)
 	return 0
 }

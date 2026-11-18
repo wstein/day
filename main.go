@@ -262,11 +262,13 @@ func realpath(p string) string {
 
 type args struct {
 	cmd, dir, date, seed string
-	chartroom            string // check, decisions: folder of the chartroom notes (default <workspace>/chartroom/notes)
-	sub, status, scope   string // decisions: subcommand, filter/new row fields
-	since                string // decisions list/open: only rows with this date or later
-	json                 bool   // decisions list/open: JSON output
-	file, time           string // briefing: input file ("-" = stdin, "" = run stw), time of day of the Stand line
+	chartroom            string          // check, decisions: folder of the chartroom notes (default <workspace>/chartroom/notes)
+	sub, status, scope   string          // decisions: subcommand, filter/new row fields
+	by, text, source     string          // decisions add: new row fields
+	have                 map[string]bool // decisions add: flags that were given
+	since                string          // decisions list/open: only rows with this date or later
+	json                 bool            // decisions list/open: JSON output
+	file, time           string          // briefing: input file ("-" = stdin, "" = run stw), time of day of the Stand line
 	dry, print, offline  bool
 }
 
@@ -662,9 +664,12 @@ const usage = `usage: day [-h] {init,rollover,check,briefing,decisions} ...
   rollover   Tageswechsel ins Logbuch             [--dir D] [--date JJJJ-MM-TT] [--dry-run]
   check      Verstöße melden (Exit 1 bei Funden)  [--dir D] [--date JJJJ-MM-TT]
              prüft auch debt-ledger.md (falls vorhanden) und zeigt Einträge älter als 3 Tage an (nur Anzeige)
-  decisions  Entscheidungsregister DECISIONS.md: list, open, from-chartroom     [--dir D] [--chartroom DIR]
+  decisions  Entscheidungsregister DECISIONS.md: list, open, from-chartroom, add     [--dir D] [--chartroom DIR]
              day decisions list [--status S] [--scope X] [--since JJJJ-MM-TT] [--json]
              day decisions open [--scope X] [--since JJJJ-MM-TT] [--json]     (open = list --status proposed)
+             day decisions add --by owner|coordinator|agent:<rolle> --status proposed|decided --scope S --text "..." --source "..."
+                               [--date JJJJ-MM-TT] [--dry-run]   hängt EINE Zeile an (ID automatisch), prüft danach die ganze Datei;
+                               bei einem Verstoß bleibt die Datei unverändert (Exit 1); decided nur mit --by owner
              day decisions from-chartroom   (nur lesen) Chartroom-Notizen mit type/decision und status/decided, die noch in keiner
                                             Quelle [[Titel]] des Registers stehen, als Zeilenvorschläge (proposed, coordinator) ausgeben
              check prüft auch DECISIONS.md (falls vorhanden); [[Titel]]-Quellen werden in --chartroom DIR gesucht
@@ -684,7 +689,7 @@ func argErr(msg string) {
 }
 
 func parse(argv []string) args {
-	var a args
+	a := args{have: map[string]bool{}}
 	if len(argv) == 0 {
 		argErr("the following arguments are required: cmd")
 	}
@@ -703,11 +708,11 @@ func parse(argv []string) args {
 				fmt.Print(usage)
 				os.Exit(0)
 			}
-			argErr("the following arguments are required: decisions subcommand (list, open, from-chartroom)")
+			argErr("the following arguments are required: decisions subcommand (list, open, from-chartroom, add)")
 		}
 		a.sub, rest = rest[0], rest[1:]
-		if a.sub != "list" && a.sub != "open" && a.sub != "from-chartroom" {
-			argErr(fmt.Sprintf("argument decisions: invalid choice: '%s' (choose from 'list', 'open', 'from-chartroom')", a.sub))
+		if a.sub != "list" && a.sub != "open" && a.sub != "from-chartroom" && a.sub != "add" {
+			argErr(fmt.Sprintf("argument decisions: invalid choice: '%s' (choose from 'list', 'open', 'from-chartroom', 'add')", a.sub))
 		}
 	}
 	listing := a.cmd == "decisions" && (a.sub == "list" || a.sub == "open")
@@ -746,8 +751,24 @@ func parse(argv []string) args {
 			if !decStatus[a.status] {
 				argErr("argument --status: proposed, decided, superseded oder revoked erwartet: " + a.status)
 			}
-		case o == "--scope" && listing:
+		case o == "--status" && a.sub == "add":
+			a.status = need()
+			a.have["status"] = true
+			if a.status != "proposed" && a.status != "decided" {
+				argErr("argument --status: proposed oder decided erwartet: " + a.status)
+			}
+		case o == "--scope" && (listing || a.sub == "add"):
 			a.scope = need()
+			a.have["scope"] = true
+		case o == "--by" && a.sub == "add":
+			a.by = need()
+			a.have["by"] = true
+		case o == "--text" && a.sub == "add":
+			a.text = need()
+			a.have["text"] = true
+		case o == "--source" && a.sub == "add":
+			a.source = need()
+			a.have["source"] = true
 		case o == "--since" && listing:
 			a.since = need()
 			if !validDate(a.since) {
@@ -757,7 +778,7 @@ func parse(argv []string) args {
 			a.json = true
 		case o == "--seed" && a.cmd == "init":
 			a.seed = need()
-		case o == "--dry-run" && (a.cmd == "init" || a.cmd == "rollover"):
+		case o == "--dry-run" && (a.cmd == "init" || a.cmd == "rollover" || a.sub == "add"):
 			a.dry = true
 		case o == "--print" && a.cmd == "briefing":
 			a.print = true
@@ -775,6 +796,13 @@ func parse(argv []string) args {
 			a.file = rest[i]
 		default:
 			argErr("unrecognized arguments: " + rest[i])
+		}
+	}
+	if a.sub == "add" {
+		for _, n := range []string{"by", "status", "scope", "text", "source"} {
+			if !a.have[n] {
+				argErr("argument --" + n + ": required for decisions add")
+			}
 		}
 	}
 	if a.cmd == "briefing" && a.offline && a.file != "" {
