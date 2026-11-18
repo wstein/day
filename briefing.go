@@ -584,13 +584,16 @@ func markStale(block []string, now, reason string) []string {
 }
 
 // writeAtomic writes data next to path (temp file in the same directory, then rename); a symlink is followed.
-func writeAtomic(path string, data []byte) {
+func writeAtomic(path string, data []byte) { writeAtomicTmp(path, data, ".DAYBOARD.md.*.tmp") }
+
+// writeAtomicTmp is writeAtomic with the temp file name pattern (as for os.CreateTemp) chosen by the caller.
+func writeAtomicTmp(path string, data []byte, pattern string) {
 	real := realpath(path)
 	mode := os.FileMode(0o644)
 	if st, err := os.Stat(real); err == nil {
 		mode = st.Mode().Perm()
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(real), ".DAYBOARD.md.*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(real), pattern)
 	if err != nil {
 		panic(die("nicht schreibbar: " + err.Error()))
 	}
