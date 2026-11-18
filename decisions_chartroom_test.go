@@ -114,7 +114,11 @@ func TestFromChartroomLinesPassTheCheck(t *testing.T) {
 		"Zeta":  fm(`["type/decision", "status/decided"]`) + "Decision of 2026-11-18: Zweite.\n",
 	})
 	_, out, _ := runDayOut(t, t.TempDir(), nil, "decisions", "from-chartroom", "--dir", dir)
-	text := decBase + strings.Join(candidateLines(out), "\n") + "\n"
+	cands := candidateLines(out)
+	if len(cands) != 2 {
+		t.Fatalf("want 2 candidates, got %q", cands)
+	}
+	text := decBase + strings.Join(cands, "\n") + "\n"
 	_, f := checkDecisionsText(text, ws, filepath.Join(ws, "chartroom", "notes"), "2026-11-18")
 	if len(f) != 0 {
 		t.Fatalf("findings: %v", f)
