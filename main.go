@@ -262,6 +262,7 @@ func realpath(p string) string {
 
 type args struct {
 	cmd, dir, date, seed string
+	chartroom            string // check, decisions: folder of the chartroom notes (default <workspace>/chartroom/notes)
 	file, time           string // briefing: input file ("-" = stdin, "" = run stw), time of day of the Stand line
 	dry, print, offline  bool
 }
@@ -580,6 +581,8 @@ func cmdCheck(a args) int {
 	f = append(f, markerFindings(b, en)...)
 	lf, open, old := checkLedger(a.dir, a.date)
 	f = append(f, lf...)
+	df, dst := checkDecisions(a.dir, a.chartroom, a.date)
+	f = append(f, df...)
 	for _, x := range f {
 		fmt.Println(x)
 	}
@@ -587,6 +590,12 @@ func cmdCheck(a args) int {
 	if open > 0 {
 		fmt.Printf("Schuldenbuch: %d offen, %d älter als %d Tage\n", open, len(old), ledgerDays)
 		for _, l := range old {
+			fmt.Println("  " + l)
+		}
+	}
+	if dst.Rows > 0 {
+		fmt.Printf("Entscheidungsregister: %d Zeilen, %d proposed, %d älter als %d Tage\n", dst.Rows, dst.Proposed, len(dst.Stale), decisionsStaleDays)
+		for _, l := range dst.Stale {
 			fmt.Println("  " + l)
 		}
 	}
@@ -706,6 +715,8 @@ func parse(argv []string) args {
 			if _, err := time.Parse("2006-01-02", a.date); err != nil {
 				argErr("argument --date: JJJJ-MM-TT erwartet: " + a.date)
 			}
+		case o == "--chartroom" && a.cmd == "check":
+			a.chartroom = need()
 		case o == "--seed" && a.cmd == "init":
 			a.seed = need()
 		case o == "--dry-run" && (a.cmd == "init" || a.cmd == "rollover"):
@@ -743,6 +754,9 @@ func run(argv []string) (rc int) {
 		a.time = time.Now().Format("15:04")
 	}
 	a.dir = resolveDir(a.dir, a.cmd == "init")
+	if a.chartroom == "" {
+		a.chartroom = filepath.Join(filepath.Dir(a.dir), "chartroom", "notes")
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			d, ok := r.(die)

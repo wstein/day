@@ -107,15 +107,15 @@ func TestDecisionsCheckCounterproofs(t *testing.T) {
 		line int
 		more int // additional findings allowed (cascades)
 	}{
-		{"Feldzahl", rep(" | owner | decided | workspace | - | Erste.", " | decided | workspace | - | Erste."), "weniger als 8 Felder (7)", 5, 0},
-		{"ID-Format", rep("D-20261103-01 | 2026", "D-2026113-01 | 2026"), "ungültige ID", 5, 0},
-		{"doppelte ID", rep("D-20261103-02 | 2026-11-03", "D-20261103-01 | 2026-11-03"), "doppelte ID D-20261103-01", 6, 2},
+		{"Feldzahl", rep(" | owner | decided | workspace | - | Erste.", " | decided | workspace | - | Erste."), "weniger als 8 Felder (7)", 5, 1},
+		{"ID-Format", rep("D-20261103-01 | 2026", "D-2026113-01 | 2026"), "ungültige ID", 5, 1},
+		{"doppelte ID", rep("D-20261103-02 | 2026-11-03", "D-20261103-01 | 2026-11-03"), "doppelte ID D-20261103-01", 6, 4},
 		{"nicht aufsteigend", func(s string) string {
 			l := strings.Split(s, "\n")
 			l[4], l[5] = l[5], l[4]
 			return strings.Join(l, "\n")
 		}, "IDs nicht aufsteigend bei D-20261103-01", 6, 2},
-		{"Lücke je Tag", rep("D-20261103-02 | 2026-11-03 | owner | superseded", "D-20261103-03 | 2026-11-03 | owner | superseded"), "NN von D-20261103-03 nicht lückenlos (erwartet 02)", 6, 1},
+		{"Lücke je Tag", rep("D-20261103-02 | 2026-11-03 | owner | superseded", "D-20261103-03 | 2026-11-03 | owner | superseded"), "NN von D-20261103-03 nicht lückenlos (erwartet 02)", 6, 2},
 		{"ungültiges Datum", rep("| 2026-11-03 | owner | decided |", "| 2026-13-03 | owner | decided |"), "ungültiges Datum 2026-13-03", 5, 0},
 		{"ID-Datum", rep("| 2026-11-03 | owner | decided |", "| 2026-11-04 | owner | decided |"), "ID-Datum ungleich Datumsfeld", 5, 0},
 		{"Status", rep("| owner | decided | workspace | - | Erste", "| owner | agreed | workspace | - | Erste"), "ungültiger Status agreed", 5, 0},
@@ -124,7 +124,7 @@ func TestDecisionsCheckCounterproofs(t *testing.T) {
 		{"Geltung", rep("| decided | workspace | - | Erste", "| decided | Work Space | - | Erste"), "ungültige Geltung Work Space", 5, 0},
 		{"Aussage leer", rep("- | Erste. |", "- |  |"), "leere Aussage", 5, 0},
 		{"Ersetzt unbekannt", rep("| - | Erste.", "| D-20250101-01 | Erste."), "Ersetzt D-20250101-01 steht nicht früher in der Datei", 5, 0},
-		{"Ersetzt spätere Zeile", rep("| - | Erste.", "| D-20261104-02 | Erste."), "Ersetzt D-20261104-02 steht nicht früher in der Datei", 5, 0},
+		{"Ersetzt spätere Zeile", rep("| - | Erste.", "| D-20261104-02 | Erste."), "Ersetzt D-20261104-02 steht nicht früher in der Datei", 5, 1},
 		{"Ersetzt Format", rep("| D-20261103-02 | Dritte", "| D-2026 | Dritte"), "ungültiges Ersetzt D-2026", 7, 2},
 		{"chat-Datum ungültig", rep("chat 2026-11-03\n", "chat 2026-02-30\n"), "Quelle: chat mit ungültigem Datum 2026-02-30", 6, 0},
 		{"chat-Datum abweichend", rep("chat 2026-11-03\n", "chat 2026-11-02\n"), "Quelle: chat-Datum 2026-11-02 ungleich Zeilendatum 2026-11-03", 6, 0},
