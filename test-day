@@ -769,6 +769,30 @@ run rollover --dir "$B13" --date 2026-11-11
 chk "rollover, Block direkt hinter Erledigt: Block unberührt" cmp -s "$T/b13.before" <(sed -n '/stw:begin/,/stw:end/p' "$B13/DAYBOARD.md")
 chk "rollover, Block direkt hinter Erledigt: nur Erledigtes im Logbuch" eq "$(grep -c 'sieht wie' "$B13/LOGBOOK.md")" 0
 
+# --- decisions ---
+WD="$T/wsd"; BD="$WD/dayboard"; mkdir -p "$BD" "$WD/chartroom/notes"; mkboard "$BD" 2026-11-18 0 0 0
+printf -- '---\ntags: ["type/decision", "status/decided"]\n---\nx\n' > "$WD/chartroom/notes/Goals.md"
+printf '# Entscheidungsregister\n<!--\nFormat\n-->\n- D-20261103-01 | 2026-11-03 | owner | decided | workspace | - | Erste. | [[Goals]]\n' > "$BD/DECISIONS.md"
+run check --dir "$BD" --date 2026-11-18
+chk "decisions: check sauber, Zusammenfassung" has "$OUT" "Entscheidungsregister: 1 Zeilen, 0 proposed, 0 älter als 7 Tage"
+chk "decisions: check Exit 0" eq "$RC" 0
+run decisions add --dir "$BD" --date 2026-11-18 --by owner --status decided --scope day --text "Zweite | mit Pipe." --source "chat 2026-11-18"
+chk "decisions: add Exit 0" eq "$RC" 0
+chk "decisions: add hängt D-20261118-01 an" has "$(tail -1 "$BD/DECISIONS.md")" "- D-20261118-01 | 2026-11-18 | owner | decided | day | - | Zweite | mit Pipe. | chat 2026-11-18"
+SUMB=$(sum "$BD/DECISIONS.md")
+run decisions add --dir "$BD" --date 2026-11-18 --by agent:x --status decided --scope day --text "t" --source "chat 2026-11-18"
+chk "decisions: add Verstoß Exit 1" eq "$RC" 1
+chk "decisions: add Verstoß meldet die Regel" has "$OUT" "decided braucht Entscheider owner"
+chk "decisions: add Verstoß lässt die Datei unverändert" eq "$(sum "$BD/DECISIONS.md")" "$SUMB"
+run decisions list --dir "$BD" --status decided --json
+chk "decisions: list --json schema_version" has "$OUT" '"schema_version": 1'
+sed 's/| decided | workspace/| agreed | workspace/' "$BD/DECISIONS.md" > "$T/dec.bad" && cp "$T/dec.bad" "$BD/DECISIONS.md"
+run check --dir "$BD" --date 2026-11-18
+chk "decisions: check meldet Zeile 5" has "$OUT" "DECISIONS.md: Zeile 5: ungültiger Status agreed"
+chk "decisions: check Verstoß Exit 1" eq "$RC" 1
+run --help
+chk "decisions: Hilfe nennt decisions" has "$OUT" "decisions  Entscheidungsregister"
+
 # Guard: kein maschinengebundener Pfad in den Skripten
 GUARD_DIR=$(cd "$(dirname "$DAY")" && pwd)
 chk "Guard: keine festen Benutzerpfade" test -z "$(grep -rnE --include='*.go' --include=README.md '/Use''rs/|Work''spaces|go-scr''ipts|\.claude/jo''bs' "$GUARD_DIR" 2>/dev/null)"
