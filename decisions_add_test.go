@@ -240,8 +240,10 @@ func TestAddChartroomOption(t *testing.T) {
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(other, "Eigene.md"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, n := range []string{"Eigene.md", "Goals.md"} { // Goals: the existing row 5 names it
+		if err := os.WriteFile(filepath.Join(other, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	args := addArgs(dir, map[string]string{"--source": "[[Eigene]]"})
 	if rc, _, _ := runDayOut(t, t.TempDir(), nil, args...); rc != 1 {
