@@ -130,9 +130,9 @@ func TestDecisionsListJSONSchemaPin(t *testing.T) {
 }
 
 func TestDecisionsListMasksControlCharacters(t *testing.T) {
-	_, dir := decWS(t, strings.Replace(decBase, "Erste.", "Er\x1b[31mste‮.", 1))
+	_, dir := decWS(t, strings.Replace(decBase, "Erste.", "Er\x1b[31mste\u202e.", 1))
 	_, out, _ := runDayOut(t, t.TempDir(), nil, "decisions", "list", "--dir", dir)
-	if strings.ContainsAny(out, "\x1b‮") || !strings.Contains(out, `Er\x1b[31mste‮.`) {
+	if strings.ContainsAny(out, "\x1b\u202e") || !strings.Contains(out, `Er\x1b[31mste\u202e.`) {
 		t.Errorf("control characters not masked: %q", out)
 	}
 }
