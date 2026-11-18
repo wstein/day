@@ -263,6 +263,9 @@ func realpath(p string) string {
 type args struct {
 	cmd, dir, date, seed string
 	chartroom            string // check, decisions: folder of the chartroom notes (default <workspace>/chartroom/notes)
+	sub, status, scope   string // decisions: subcommand, filter/new row fields
+	since                string // decisions list/open: only rows with this date or later
+	json                 bool   // decisions list/open: JSON output
 	file, time           string // briefing: input file ("-" = stdin, "" = run stw), time of day of the Stand line
 	dry, print, offline  bool
 }
@@ -653,12 +656,17 @@ func resolveDir(given string, create bool) string {
 	return realpath(d)
 }
 
-const usage = `usage: day [-h] {init,rollover,check,briefing} ...
+const usage = `usage: day [-h] {init,rollover,check,briefing,decisions} ...
 
   init       Verzeichnis, DAYBOARD/LOGBOOK/BACKLOG.md anlegen [--dir D] [--date JJJJ-MM-TT] [--seed FILE] [--dry-run]
   rollover   Tageswechsel ins Logbuch             [--dir D] [--date JJJJ-MM-TT] [--dry-run]
   check      Verstöße melden (Exit 1 bei Funden)  [--dir D] [--date JJJJ-MM-TT]
              prüft auch debt-ledger.md (falls vorhanden) und zeigt Einträge älter als 3 Tage an (nur Anzeige)
+  decisions  Entscheidungsregister DECISIONS.md: list, open     [--dir D] [--chartroom DIR]
+             day decisions list [--status S] [--scope X] [--since JJJJ-MM-TT] [--json]
+             day decisions open [--scope X] [--since JJJJ-MM-TT] [--json]     (open = list --status proposed)
+             check prüft auch DECISIONS.md (falls vorhanden); [[Titel]]-Quellen werden in --chartroom DIR gesucht
+             (Default <Workspace>/chartroom/notes, Workspace = Elternverzeichnis des Dayboards)
   briefing   stw-Fakten in den Block zwischen den stw-Markern schreiben und mit dem Plan-Überblick ausgeben
              day briefing [DATEI|-] [--print] [--offline] [--dir D] [--date JJJJ-MM-TT] [--time HH:MM]
              DATEI: JSON von "stw status --json" (- = Standardeingabe); ohne Argument ruft day stw im Workspace des Dayboards auf (--offline wird weitergereicht; Go-stw liefert offline schema 1)
@@ -669,7 +677,7 @@ const usage = `usage: day [-h] {init,rollover,check,briefing} ...
 `
 
 func argErr(msg string) {
-	fmt.Fprintf(os.Stderr, "usage: day [-h] {init,rollover,check,briefing} ...\nday: error: %s\n", msg)
+	fmt.Fprintf(os.Stderr, "usage: day [-h] {init,rollover,check,briefing,decisions} ...\nday: error: %s\n", msg)
 	os.Exit(2)
 }
 
@@ -683,10 +691,24 @@ func parse(argv []string) args {
 		os.Exit(0)
 	}
 	a.cmd = argv[0]
-	if a.cmd != "init" && a.cmd != "rollover" && a.cmd != "check" && a.cmd != "briefing" {
-		argErr(fmt.Sprintf("argument cmd: invalid choice: '%s' (choose from 'init', 'rollover', 'check', 'briefing')", a.cmd))
+	if a.cmd != "init" && a.cmd != "rollover" && a.cmd != "check" && a.cmd != "briefing" && a.cmd != "decisions" {
+		argErr(fmt.Sprintf("argument cmd: invalid choice: '%s' (choose from 'init', 'rollover', 'check', 'briefing', 'decisions')", a.cmd))
 	}
 	rest := argv[1:]
+	if a.cmd == "decisions" {
+		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+			if len(rest) > 0 && (rest[0] == "-h" || rest[0] == "--help") {
+				fmt.Print(usage)
+				os.Exit(0)
+			}
+			argErr("the following arguments are required: decisions subcommand (list, open)")
+		}
+		a.sub, rest = rest[0], rest[1:]
+		if a.sub != "list" && a.sub != "open" {
+			argErr(fmt.Sprintf("argument decisions: invalid choice: '%s' (choose from 'list', 'open')", a.sub))
+		}
+	}
+	listing := a.cmd == "decisions" && (a.sub == "list" || a.sub == "open")
 	for i := 0; i < len(rest); i++ {
 		o, v, hasV := rest[i], "", false
 		if strings.HasPrefix(o, "--") {
@@ -715,8 +737,22 @@ func parse(argv []string) args {
 			if _, err := time.Parse("2006-01-02", a.date); err != nil {
 				argErr("argument --date: JJJJ-MM-TT erwartet: " + a.date)
 			}
-		case o == "--chartroom" && a.cmd == "check":
+		case o == "--chartroom" && (a.cmd == "check" || a.cmd == "decisions"):
 			a.chartroom = need()
+		case o == "--status" && a.sub == "list":
+			a.status = need()
+			if !decStatus[a.status] {
+				argErr("argument --status: proposed, decided, superseded oder revoked erwartet: " + a.status)
+			}
+		case o == "--scope" && listing:
+			a.scope = need()
+		case o == "--since" && listing:
+			a.since = need()
+			if !validDate(a.since) {
+				argErr("argument --since: JJJJ-MM-TT erwartet: " + a.since)
+			}
+		case o == "--json" && listing:
+			a.json = true
 		case o == "--seed" && a.cmd == "init":
 			a.seed = need()
 		case o == "--dry-run" && (a.cmd == "init" || a.cmd == "rollover"):
@@ -774,6 +810,8 @@ func run(argv []string) (rc int) {
 		return cmdRollover(a)
 	case "briefing":
 		return cmdBriefing(a)
+	case "decisions":
+		return cmdDecisions(a)
 	}
 	return cmdCheck(a)
 }

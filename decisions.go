@@ -6,6 +6,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -270,4 +272,82 @@ func checkDecisions(dir, chartroom, today string) (findings []string, st decStat
 		}
 	}
 	return findings, st
+}
+
+// readRegister returns the text of dir/DECISIONS.md; a missing file is an error (exit 2).
+func readRegister(dir string) string {
+	p := filepath.Join(dir, decisionsFile)
+	if !exists(p) {
+		panic(die(decisionsFile + " fehlt: " + p))
+	}
+	return read(p)
+}
+
+// decJSONRow is the stable JSON shape of one row (schema_version 1). Replaces is null for "-".
+type decJSONRow struct {
+	Line     int     `json:"line"`
+	ID       string  `json:"id"`
+	Date     string  `json:"date"`
+	By       string  `json:"by"`
+	Status   string  `json:"status"`
+	Scope    string  `json:"scope"`
+	Replaces *string `json:"replaces"`
+	Text     string  `json:"text"`
+	Source   string  `json:"source"`
+}
+
+func cmdDecisions(a args) int {
+	switch a.sub {
+	case "open":
+		a.status = "proposed"
+		return decList(a)
+	}
+	return decList(a)
+}
+
+// decList prints the rows that pass the filters (status, scope, since), in file order.
+func decList(a args) int {
+	rows, findings := checkDecisionsText(readRegister(a.dir), filepath.Dir(a.dir), a.chartroom, a.date)
+	if len(findings) > 0 {
+		fmt.Fprintf(os.Stderr, "day: Warnung: %s hat %d Verstöße (day check zeigt sie)\n", decisionsFile, len(findings))
+	}
+	var sel []decRow
+	for _, r := range rows {
+		if (a.status == "" || r.Status == a.status) && (a.scope == "" || r.Scope == a.scope) && (a.since == "" || r.Date >= a.since) {
+			sel = append(sel, r)
+		}
+	}
+	if a.json {
+		out := struct {
+			SchemaVersion int          `json:"schema_version"`
+			Decisions     []decJSONRow `json:"decisions"`
+		}{1, []decJSONRow{}}
+		for _, r := range sel {
+			j := decJSONRow{r.Line, r.ID, r.Date, r.By, r.Status, r.Scope, nil, r.Text, r.Source}
+			if r.Replaces != "-" {
+				rep := r.Replaces
+				j.Replaces = &rep
+			}
+			out.Decisions = append(out.Decisions, j)
+		}
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			panic(die("JSON: " + err.Error()))
+		}
+		fmt.Print(b.String())
+		return 0
+	}
+	if len(sel) == 0 {
+		fmt.Println("keine Einträge")
+		return 0
+	}
+	const f = "%-14s %-10s %-11s %-10s %-13s %s\n"
+	fmt.Printf(f, "ID", "DATUM", "ENTSCHEIDER", "STATUS", "GELTUNG", "AUSSAGE")
+	for _, r := range sel {
+		fmt.Printf(f, mask(r.ID, 0, false), mask(r.Date, 0, false), mask(r.By, 0, false), mask(r.Status, 0, false), mask(r.Scope, 0, false), mask(r.Text, 100, false))
+	}
+	return 0
 }
